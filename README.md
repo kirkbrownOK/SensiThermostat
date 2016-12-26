@@ -1,0 +1,2 @@
+# SensiThermostat
+SmartThings Sensi Thermostat
