@@ -16,29 +16,25 @@
  *	Date: 2016-12-24
  *
  */
+ 
 definition(
 		name: "Sensi (Connect)",
 		namespace: "kirkbrownOK/SensiThermostat",
 		author: "Kirk Brown",
 		description: "Connect your Sensi thermostats to SmartThings.",
 		category: "SmartThings Labs",
-		iconUrl: "http://imgur.com/QVbsCpu",
-		iconX2Url: "http://imgur.com/4BfQn6I",
+		iconUrl: "http://i.imgur.com/QVbsCpu.jpg",
+		iconX2Url: "http://i.imgur.com/4BfQn6I.jpg",
 		singleInstance: true
 )
 
 preferences {
-	page(name: "auth", title: "Sensi", nextPage:"", content:"authPage", uninstall: true, install:true)
-	
-}
-
-mappings {
-	//path("/oauth/initialize") {action: [GET: "oauthInitUrl"]}
-	//path("/oauth/callback") {action: [GET: "callback"]}
+	page(name: "auth", title: "Sensi", nextPage:"", content:"authPage", uninstall: true)
+	page(name: "getDevicesPage", title: "Sensi Devices", nextPage:"", content:"getDevicesPage", uninstall: true, install: true)
 }
 
 def authPage() {
-	log.debug "authPage()"
+	//log.debug "authPage()"
 
 	def description
 	def uninstallAllowed = false
@@ -49,9 +45,7 @@ def authPage() {
 		description = "Click to enter Sensi Credentials"
 	}
 
-	// get rid of next button until the user is actually auth'd
-	if (!state.connectionToken) {
-		return dynamicPage(name: "auth", title: "Login", nextPage: "", uninstall:uninstallAllowed) {
+		return dynamicPage(name: "auth", title: "Login", nextPage: "getDevicesPage", uninstall:uninstallAllowed) {
 			section() {
 				paragraph "Enter your Username and Password for Sensi Connect. Your username and password will be saved in SmartThings in whatever secure/insecure manner SmartThings saves them."
 				input("userName", "string", title:"Sensi Email Address", required:true, displayDuringSetup: true)
@@ -59,16 +53,21 @@ def authPage() {
     			input("testButton", "capability.button", title: "Test button")
 			}
 		}
-	} else {
-		def stats = getSensiThermostats()
-		log.debug "thermostat list: $stats"
-		return dynamicPage(name: "auth", title: "Select Your Thermostats", uninstall: true) {
-			section("") {
-				paragraph "Tap below to see the list of sensi thermostats available in your sensi account and select the ones you want to connect to SmartThings."
-				input(name: "thermostats", title:"", type: "enum", required:true, multiple:true, description: "Tap to choose", metadata:[values:stats])
-			}
-		}
-	}
+        getAuthorized()
+        getToken()
+
+}
+def getDevicesPage() {
+	//log.debug "getDevicesPage"
+         
+    def stats = getSensiThermostats()
+    //log.debug "thermostat list: $stats"
+    return dynamicPage(name: "getDevicesPage", title: "Select Your Thermostats", uninstall: true) {
+        section("") {
+            paragraph "Tap below to see the list of sensi thermostats available in your sensi account and select the ones you want to connect to SmartThings."
+            input(name: "thermostats", title:"", type: "enum", required:true, multiple:true, description: "Tap to choose", metadata:[values:stats])
+        }
+    }
 }
 
 
@@ -90,11 +89,14 @@ def updated() {
 	initialize()
 }
 def buttonHandler(evt) {
-	//log.debug "Button Event"
-	getAuthorized()
-    //log.debug "Get Token"
-    getToken()
-    getSensiThermostats()
+	state.connected = false
+    log.debug "Button Press"
+    getConnected()
+    log.debug "Connected"
+    def child1 = getChildDevices()[0].device.deviceNetworkId
+    def child2 = getChildDevices()[1].device.deviceNetworkId
+    log.debug "Child Dev1: ${child1} Dev2: ${child2}"
+    pollDNI(child1)
     
     
 }
@@ -109,37 +111,23 @@ def initialize() {
 		def d = getChildDevice(dni)
 		if(!d) {
         	log.debug "addChildDevice($app.namespace, ${getChildName()}, $dni, null, [\"label\":\"${state.thermostats[dni]}\" ?: \"Sensi Thermostat\"])"
-			//d = addChildDevice(app.namespace, getChildName(), dni, null, ["label":"${state.thermostats[dni]}" ?: "Sensi Thermostat"])
+			d = addChildDevice(app.namespace, getChildName(), dni, null, ["label":"${state.thermostats[dni]}" ?: "Sensi Thermostat"])
 			log.debug "created ${d.displayName} with id $dni"
 		} else {
 			log.debug "found ${d.displayName} with id $dni already exists"
 		}
 		return d
 	}
-	return
-	def sensors = ecobeesensors.collect { dni ->
-		def d = getChildDevice(dni)
-		if(!d) {
-			d = addChildDevice(app.namespace, getSensorChildName(), dni, null, ["label":"${atomicState.sensors[dni]}" ?:"Ecobee Sensor"])
-			log.debug "created ${d.displayName} with id $dni"
-		} else {
-			log.debug "found ${d.displayName} with id $dni already exists"
-		}
-		return d
-	}
-	log.debug "created ${devices.size()} thermostats and ${sensors.size()} sensors."
+
+	log.debug "created ${devices.size()} thermostats."
 
 	def delete  // Delete any that are no longer in settings
-	if(!thermostats && !ecobeesensors) {
+	if(!thermostats) {
 		log.debug "delete thermostats ands sensors"
 		delete = getAllChildDevices() //inherits from SmartApp (data-management)
 	} else { //delete only thermostat
-		log.debug "delete individual thermostat and sensor"
-		if (!ecobeesensors) {
-			delete = getChildDevices().findAll { !thermostats.contains(it.deviceNetworkId) }
-		} else {
-			delete = getChildDevices().findAll { !thermostats.contains(it.deviceNetworkId) && !ecobeesensors.contains(it.deviceNetworkId)}
-		}
+		log.debug "delete individual thermostat"
+		delete = getChildDevices().findAll { !thermostats.contains(it.deviceNetworkId) }		
 	}
 	log.warn "delete: ${delete}, deleting ${delete.size()} thermostats"
 	delete.each { deleteChildDevice(it.deviceNetworkId) } //inherits from SmartApp (data-management)
@@ -147,26 +135,30 @@ def initialize() {
 	//send activity feeds to tell that device is connected
 	def notificationMessage = "is connected to SmartThings"
 	sendActivityFeeds(notificationMessage)
-	atomicState.timeSendPush = null
-	atomicState.reAttempt = 0
+	state.timeSendPush = null
+	state.reAttempt = 0
 
-	pollHandler() //first time polling data data from thermostat
-
+	try{
+		pollHandler() //first time polling data data from thermostat
+	} catch (e) {
+    	log.warn "Error in first time polling. Could mean something is wrong."
+    }
 	//automatically update devices status every 5 mins
-	runEvery5Minutes("poll")
+	//runEvery5Minutes("poll")
 
 }
 
 def getAuthorized() {
     def bodyParams = [ Password: "${userPassword}", UserName: "${userName}" ]
+    state.tid = 2
+    state.sendCounter=0
+    state.GroupsToken = null
 	def deviceListParams = [
 		uri: "https://bus-serv.sensicomfort.com/api/authorize",
 		//path: "/api/authorize",
 		headers: ["Content-Type": "application/json", "Accept": "application/json; version=1, */*; q=0.01", "X-Requested-With":"XMLHttpRequest"],
 		body: [ Password: userPassword, UserName: userName ]
 	]
-	//log.debug "DLP: ${deviceListParams}"
-	def stats = [:]
 	try {
 		httpPostJson(deviceListParams) { resp ->
         	//log.debug "Resp Headers: ${resp.headers}"
@@ -176,9 +168,15 @@ def getAuthorized() {
             		//log.debug "${it.name} : ${it.value}"
                     if (it.name == "Set-Cookie") {
                     	//log.debug "Its SETCOOKIE ${it.value}"
-                        state.myCookie = it.value
-                        //def tempC = it.value.split(";")
-                        //state.myCookie = tempC[0].trim()
+                        //state.myCookie = it.value
+                        def tempC = it.value.split(";")
+                        tempC = tempC[0].trim()
+                        if(tempC == state.myCookie) {
+                        	log.debug "Cookie didn't change"
+                        } else {
+                        	state.myCookie = tempC
+                        	//log.debug "My Cookie: ${state.myCookie}"
+                        }
                     }
         		}
 			} else {
@@ -193,50 +191,66 @@ def getAuthorized() {
 }
 
 def getToken() {
-	log.debug "GetToken"
+	//log.debug "GetToken"
     def params = [
-    	//uri: "https://tnrtkrucm4ig.runscope.net",
         uri: 'https://bus-serv.sensicomfort.com',
     	path: '/realtime/negotiate',
-        //query: ["_":now()],
         requestContentType: 'application/json',
         contentType: 'application/json',
         headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip']
 	]
-	//log.debug "Now ${now()} ${params}"
     try {
         httpGet(params) { resp ->
-            resp.headers.each {
-                //log.debug "${it.name} : ${it.value}"
-            }
             //log.debug "response contentType: ${resp.contentType}"
             //log.debug "response data: ${resp.data}"
 //            resp.data.each{
 //            	log.debug "${it}"
 //            }
             state.connectionToken = resp.data.ConnectionToken
-            log.debug "stateConnectionToken: ${state.connectionToken}"
-            
+            state.connectionId = resp.data.ConnectionId
+            //log.debug "stateConnectionToken: ${state.connectionToken}"
+            //log.debug "stateConnectionId: ${state.connectionId}"
         }
     } catch (e) {
-        log.error "something went wrong: $e"
-        e.each {
-               log.debug "${it}"
-            }
+        log.error "Connection Token error $e"
     }
 
 }
-
-def getSensiThermostats() {
-	log.debug "getting device list"
-	state.sensiSensors = []
+def getConnected() {
+	getAuthorized()
+    getToken()
+	log.debug "GetConnected"
+    
     def params = [
-        uri: 'https://bus-serv.sensicomfort.com',
-    	path: '/realtime/negotiate',
-        requestContentType: 'application/json',
+    	
+        uri: getApiEndpoint(),
+    	path: '/realtime/connect',
+        query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]",connectionId:state.connectionId,tid:state.tid,"_":now()],
+        //requestContentType: 'application/json',
         contentType: 'application/json',
         headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip']
 	]
+	//log.debug "Sending Connect"
+    try {
+        httpGet(params) { resp ->
+        	//log.debug "Conected Resp: $resp.data"
+            //log.debug "resp.c ${resp.data.C}"
+            if(resp.data.C) {
+            	state.messageId= resp.data.C
+            	log.debug "MessageID: ${state.messageId}"
+            }    
+            //state.connectionToken = resp.data.ConnectionToken
+            //log.debug "stateConnectionToken: ${state.connectionToken}"
+            state.connected = true
+            state.tid = state.tid+1
+        }
+    } catch (e) {
+        log.error "Get Connected went wrong: $e"
+    }    
+}
+def getSensiThermostats() {
+	log.debug "getting device list"
+	state.sensiSensors = []
 	def deviceListParams = [
 		uri: apiEndpoint,
 		path: "/api/thermostats",
@@ -248,14 +262,12 @@ def getSensiThermostats() {
 	def stats = [:]
 	try {
 		httpGet(deviceListParams) { resp ->
-        	//log.debug "response: ${resp.data}"
+        	
 			if (resp.status == 200) {
-            	log.debug "resp.data.DeviceName: ${resp.data.DeviceName}"
+            	//log.debug "resp.data.DeviceName: ${resp.data.DeviceName}"
 				resp.data.each { stat ->
-                	//log.debug "$stat"
-                	//log.debug "${stat.DeviceName} DNI:${stat.ICD}"
+                	
 					state.sensiSensors = state.sensiSensors == null ? stat.DeviceName : state.sensiSensors <<  stat.DeviceName
-                    log.debug "sensiSensors: ${state.sensiSensors}"
 					def dni = stat.ICD
 					stats[dni] = getThermostatDisplayName(stat)
 				}
@@ -265,81 +277,128 @@ def getSensiThermostats() {
 		}
 	} catch (e) {
         log.trace "Exception getting thermostats: " + e
+        state.connected = false
     }
 	state.thermostats = stats
+    state.thermostatResponse = stats
     log.debug "State Thermostats: ${state.thermostats}"
 	return stats
 }
 def pollHandler() {
 	log.debug "pollHandler()"
-	pollChildren(null) // Hit the ecobee API for update on all thermostats
+	pollChildren(null) // Hit the sensi API for update on all thermostats
 
 }
 
 def pollChildren(child = null) {
-    def thermostatIdsString = getChildDeviceIdsString()
-    log.debug "polling children: $thermostatIdsString"
+    def myDevices = getChildDevices()
+    myDevices.each { individualDevice ->
+    	log.debug "In mydevices"
+        def thermostatIdsString = individualDevice.device.deviceNetworkId
+        log.debug "polling children: $thermostatIdsString"
+        def requestBody = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"Subscribe\",\"A\":[\"${thermostatIdsString}\"],\"I\":0}"]
+        def requestBody2 = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"Subscribe\",\"A\":[\"${thermostatIdsString}\"],\"I\":1}"]
+        def requestBody3 = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"Unsubscribe\",\"A\":[\"${thermostatIdsString}\"],\"I\":2}"]
 
-    def requestBody = [
-        selection: [
-            selectionType: "thermostats",
-            selectionMatch: thermostatIdsString,
-            includeExtendedRuntime: true,
-            includeSettings: true,
-            includeRuntime: true,
-            includeSensors: true
+        def result = false
+        if(!state.connected || (state.messageId == null)) {
+            getConnected()
+        }    
+        def params = [    	
+            uri: getApiEndpoint(),
+            path: '/realtime/send',
+            query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]",connectionId:state.connectionId],
+            headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip','Content-Type':'application/x-www-form-urlencoded',"X-Requested-With":"XMLHttpRequest"],
+            body: requestBody
         ]
-    ]
 
-	def result = false
+        try {
 
-	def pollParams = [
-        uri: apiEndpoint,
-        path: "/1/thermostat",
-        headers: ["Content-Type": "text/json", "Authorization": "Bearer ${atomicState.authToken}"],
-        // TODO - the query string below is not consistent with the Ecobee docs:
-        // https://www.ecobee.com/home/developer/api/documentation/v1/operations/get-thermostats.shtml
-        query: [format: 'json', body: toJson(requestBody)]
-    ]
-
-	try{
-		httpGet(pollParams) { resp ->
-			if(resp.status == 200) {
-                log.debug "poll results returned resp.data ${resp.data}"
-                atomicState.remoteSensors = resp.data.thermostatList.remoteSensors
-                updateSensorData()
-                storeThermostatData(resp.data.thermostatList)
-                result = true
-                log.debug "updated ${atomicState.thermostats?.size()} stats: ${atomicState.thermostats}"
+            httpPost(params) { resp ->
+                log.debug "resp 1: ${resp.data}"
             }
-		}
-	} catch (groovyx.net.http.HttpResponseException e) {
-		log.trace "Exception polling children: " + e.response.data.status
-        if (e.response.data.status.code == 14) {
-            atomicState.action = "pollChildren"
-            log.debug "Refreshing your auth_token!"
-            refreshAuthToken()
+            params.body = requestBody2
+            httpPost(params) { resp ->
+                log.debug "resp 2: ${resp.data}"
+            }
+            state.tid = state.tid+1
+        } catch (e) {
+            log.error "Poll Subscribe went wrong: $e"
+            state.connected = false
         }
-	}
+        params = [
+            uri: getApiEndpoint(),
+            path: '/realtime/poll',
+            query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]"
+                ,connectionId:state.connectionId,messageId:state.messageId,tid:state.tid,'_':now()],
+            headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip','Content-Type':'application/x-www-form-urlencoded',"X-Requested-With":"XMLHttpRequest"]
+        ]
+        if(state.GroupsToken) {
+            params.query = [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]"
+                ,connectionId:state.connectionId,messageId:state.messageId,GroupsToken:state.GroupsToken,tid:state.tid,'_':now()]
+        }
+
+        try{
+            httpGet(params) { resp ->
+                if(resp.data.M[0].A[1]) {
+                    //state.connected = false           	
+                    log.info "Final Poll ${resp.data.M[0].A[1]}"
+                    //log.info "state.thermostats[${thermostatIdsString}] = data"
+                    state.thermostatResponse[thermostatIdsString] = resp.data.M[0].A[1]
+                }
+                if(resp.data.C) {            	
+                    state.messageId = resp.data.C
+                }
+                if(resp.data.G) {
+                    state.GroupsToken = resp.data.G
+                }
+                if(resp.status == 200) {
+                    result = true
+                }
+            }
+            state.tid = state.tid+1
+        } catch (e) {
+            log.trace "Exception polling children: " + e
+            state.connected = false        
+        }
+        params = [    	
+            uri: getApiEndpoint(),
+            path: '/realtime/send',
+            query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]",connectionId:state.connectionId],
+            headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip','Content-Type':'application/x-www-form-urlencoded',"X-Requested-With":"XMLHttpRequest"],
+            body: requestBody3
+        ]
+
+        try {
+
+            httpPost(params) { resp ->
+                log.debug "resp 3: ${resp.data}"
+            }
+        } 
+        catch (e) {
+        	log.trace "Exception unsubscribing " + e
+        	state.connected = false
+    	}
+    }    
 	return result
 }
 
 // Poll Child is invoked from the Child Device itself as part of the Poll Capability
 def pollChild() {
 	def devices = getChildDevices()
-
+	
 	if (pollChildren()) {
 		devices.each { child ->
-			if (!child.device.deviceNetworkId.startsWith("ecobee_sensor")) {
-				if(atomicState.thermostats[child.device.deviceNetworkId] != null) {
-					def tData = atomicState.thermostats[child.device.deviceNetworkId]
-					log.info "pollChild(child)>> data for ${child.device.deviceNetworkId} : ${tData.data}"
-					child.generateEvent(tData.data) //parse received message from parent
-				} else if(atomicState.thermostats[child.device.deviceNetworkId] == null) {
-					log.error "ERROR: Device connection removed? no data for ${child.device.deviceNetworkId}"
-					return null
-				}
-			}
+        	return null
+            if(state.thermostatResponse[child.device.deviceNetworkId] != null) {
+                def tData = state.thermostatResponse[child.device.deviceNetworkId]
+                log.info "pollChild(child)>> data for ${child.device.deviceNetworkId} : ${tData.data}"
+                child.generateEvent(tData.data) //parse received message from parent
+            } else if(state.thermostatResponse[child.device.deviceNetworkId] == null) {
+                log.error "ERROR: Device connection removed? no data for ${child.device.deviceNetworkId}"
+                return null
+            }
+			
 		}
 	} else {
 		log.info "ERROR: pollChildren()"
@@ -353,10 +412,10 @@ void poll() {
 }
 
 def availableModes(child) {
-	debugEvent ("atomicState.thermostats = ${atomicState.thermostats}")
+	debugEvent ("atomicState.thermostats = ${state.thermostatResponse}")
 	debugEvent ("Child DNI = ${child.device.deviceNetworkId}")
 
-	def tData = atomicState.thermostats[child.device.deviceNetworkId]
+	def tData = state.thermostatResponse[child.device.deviceNetworkId]
 
 	debugEvent("Data = ${tData}")
 
@@ -384,10 +443,10 @@ def availableModes(child) {
 }
 
 def currentMode(child) {
-	debugEvent ("atomicState.Thermos = ${atomicState.thermostats}")
+	debugEvent ("atomicState.Thermos = ${state.thermostats}")
 	debugEvent ("Child DNI = ${child.device.deviceNetworkId}")
 
-	def tData = atomicState.thermostats[child.device.deviceNetworkId]
+	def tData = state.thermostatResponse[child.device.deviceNetworkId]
 
 	debugEvent("Data = ${tData}")
 
@@ -412,56 +471,6 @@ def toQueryString(Map m) {
 	return m.collect { k, v -> "${k}=${URLEncoder.encode(v.toString())}" }.sort().join("&")
 }
 
-private refreshAuthToken() {
-	log.debug "refreshing auth token"
-
-	if(!atomicState.refreshToken) {
-		log.warn "Can not refresh OAuth token since there is no refreshToken stored"
-	} else {
-		def refreshParams = [
-			method: 'POST',
-			uri   : apiEndpoint,
-			path  : "/token",
-			query : [grant_type: 'refresh_token', code: "${atomicState.refreshToken}", client_id: smartThingsClientId],
-		]
-
-		def notificationMessage = "is disconnected from SmartThings, because the access credential changed or was lost. Please go to the Ecobee (Connect) SmartApp and re-enter your account login credentials."
-		//changed to httpPost
-		try {
-			def jsonMap
-			httpPost(refreshParams) { resp ->
-				if(resp.status == 200) {
-					log.debug "Token refreshed...calling saved RestAction now!"
-					debugEvent("Token refreshed ... calling saved RestAction now!")
-					saveTokenAndResumeAction(resp.data)
-			    }
-            }
-		} catch (groovyx.net.http.HttpResponseException e) {
-			log.error "refreshAuthToken() >> Error: e.statusCode ${e.statusCode}"
-			def reAttemptPeriod = 300 // in sec
-			if (e.statusCode != 401) { // this issue might comes from exceed 20sec app execution, connectivity issue etc.
-				runIn(reAttemptPeriod, "refreshAuthToken")
-			} else if (e.statusCode == 401) { // unauthorized
-				atomicState.reAttempt = atomicState.reAttempt + 1
-				log.warn "reAttempt refreshAuthToken to try = ${atomicState.reAttempt}"
-				if (atomicState.reAttempt <= 3) {
-					runIn(reAttemptPeriod, "refreshAuthToken")
-				} else {
-					sendPushAndFeeds(notificationMessage)
-					atomicState.reAttempt = 0
-				}
-			}
-		}
-	}
-}
-
-/**
- * Saves the refresh and auth token from the passed-in JSON object,
- * and invokes any previously executing action that did not complete due to
- * an expired token.
- *
- * @param json - an object representing the parsed JSON response from Ecobee
- */
 private void saveTokenAndResumeAction(json) {
     log.debug "token response json: $json"
     if (json) {
@@ -716,4 +725,11 @@ private void storeThermostatData(thermostats) {
 
 def convertFtoC (tempF) {
 	return String.format("%.1f", (Math.round(((tempF - 32)*(5/9)) * 2))/2)
+}
+
+def sendActivityFeeds(notificationMessage) {
+	def devices = getChildDevices()
+	devices.each { child ->
+		child.generateActivityFeedsEvent(notificationMessage) //parse received message from parent
+	}
 }
