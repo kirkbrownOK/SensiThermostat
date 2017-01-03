@@ -14,6 +14,21 @@
  *
  *	Author: Kirk Brown
  *	Date: 2016-12-24
+ *  Date: 2017-01-02  The Sensi Connect App is near fully functional
+ *
+ *
+ *	Place the Sensi (Connect) code under the My SmartApps section. Be certain you publish the app for you.
+ *  Place the Sensi Thermostat Device Type Handler under My Device Handlers section.
+ *
+ *
+ *  The Program Flow is as follows:
+ *  1.	SmartApp gets user credentials in the install process.
+ *  2.	The SmartApp gets the user’s thermostats and lists them for subscription in the SmartApp.
+ *  	a.	The smartApp uses the user’s credentials to get authorized, get a connection token, and then list the thermostats
+ *  3.	The User then selects the desired thermostats to add to SmartThings
+ *  4.	The SmartApp schedules a refresh/poll of the thermostats every so often. Default is 5 minutes for now. The interface is not official, so polling to often could get noticed.
+ *  5.	If any thermostat device is refreshed, then they all get polled from the Sensi API. YOU SHOULD NOT add polling to devices ie don’t use pollster for more than 1 thermostat device -> if you do then all devices will get updated each time.
+ *
  *
  */
  
@@ -50,22 +65,23 @@ def authPage() {
 				paragraph "Enter your Username and Password for Sensi Connect. Your username and password will be saved in SmartThings in whatever secure/insecure manner SmartThings saves them."
 				input("userName", "string", title:"Sensi Email Address", required:true, displayDuringSetup: true)
     			input("userPassword", "password", title:"Sensi account password", required:true, displayDuringSetup:true)		
-    			input("testButton", "capability.button", title: "Test button")
 			}
 		}
-        getAuthorized()
-        getToken()
+        //getAuthorized()
+        //getToken()
 
 }
 def getDevicesPage() {
 	//log.debug "getDevicesPage"
+    getConnected()
          
     def stats = getSensiThermostats()
     //log.debug "thermostat list: $stats"
     return dynamicPage(name: "getDevicesPage", title: "Select Your Thermostats", uninstall: true) {
         section("") {
             paragraph "Tap below to see the list of sensi thermostats available in your sensi account and select the ones you want to connect to SmartThings."
-            input(name: "thermostats", title:"", type: "enum", required:true, multiple:true, description: "Tap to choose", metadata:[values:stats])
+            input(name: "thermostats", title:"", type: "enum", required:false, multiple:true, description: "Tap to choose", metadata:[values:stats])
+            
         }
     }
 }
@@ -88,22 +104,10 @@ def updated() {
 	unsubscribe()
 	initialize()
 }
-def buttonHandler(evt) {
-	state.connected = false
-    log.debug "Button Press"
-    getConnected()
-    log.debug "Connected"
-    def child1 = getChildDevices()[0].device.deviceNetworkId
-    def child2 = getChildDevices()[1].device.deviceNetworkId
-    log.debug "Child Dev1: ${child1} Dev2: ${child2}"
-    pollDNI(child1)
-    
-    
-}
+
 def initialize() {
 
 	log.debug "initialize"
-    subscribe(testButton,"button",buttonHandler)
     getAuthorized()
     getToken()
     
@@ -144,18 +148,20 @@ def initialize() {
     	log.warn "Error in first time polling. Could mean something is wrong."
     }
 	//automatically update devices status every 5 mins
-	//runEvery5Minutes("poll")
+    
+	runEvery5Minutes("poll")
+    
 
 }
 
 def getAuthorized() {
     def bodyParams = [ Password: "${userPassword}", UserName: "${userName}" ]
-    state.tid = 2
-    state.sendCounter=0
+    state.RBCounter = 2
+    state.sendCounter= 0
     state.GroupsToken = null
 	def deviceListParams = [
-		uri: "https://bus-serv.sensicomfort.com/api/authorize",
-		//path: "/api/authorize",
+		uri: getApiEndpoint(),
+		path: "/api/authorize",
 		headers: ["Content-Type": "application/json", "Accept": "application/json; version=1, */*; q=0.01", "X-Requested-With":"XMLHttpRequest"],
 		body: [ Password: userPassword, UserName: userName ]
 	]
@@ -175,14 +181,13 @@ def getAuthorized() {
                         	log.debug "Cookie didn't change"
                         } else {
                         	state.myCookie = tempC
-                        	//log.debug "My Cookie: ${state.myCookie}"
+                        	log.debug "My Cookie: ${state.myCookie}"
                         }
                     }
         		}
 			} else {
 				log.debug "http status: ${resp.status}"
 			}
-            //log.debug "Cookie: ${state.myCookie}"
 		}
 	} catch (e) {
         log.trace "Exception trying to authenticate $e"
@@ -193,23 +198,19 @@ def getAuthorized() {
 def getToken() {
 	//log.debug "GetToken"
     def params = [
-        uri: 'https://bus-serv.sensicomfort.com',
+        uri: getApiEndpoint(),
     	path: '/realtime/negotiate',
         requestContentType: 'application/json',
         contentType: 'application/json',
-        headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip']
+        headers: [
+        	'Cookie':state.myCookie,
+            'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip'
+            ]
 	]
     try {
         httpGet(params) { resp ->
-            //log.debug "response contentType: ${resp.contentType}"
-            //log.debug "response data: ${resp.data}"
-//            resp.data.each{
-//            	log.debug "${it}"
-//            }
             state.connectionToken = resp.data.ConnectionToken
             state.connectionId = resp.data.ConnectionId
-            //log.debug "stateConnectionToken: ${state.connectionToken}"
-            //log.debug "stateConnectionId: ${state.connectionId}"
         }
     } catch (e) {
         log.error "Connection Token error $e"
@@ -225,27 +226,28 @@ def getConnected() {
     	
         uri: getApiEndpoint(),
     	path: '/realtime/connect',
-        query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]",connectionId:state.connectionId,tid:state.tid,"_":now()],
-        //requestContentType: 'application/json',
+        query: [
+        	transport:'longPolling',
+            connectionToken:state.connectionToken,
+        	connectionData:"[{\"name\": \"thermostat-v1\"}]",
+            connectionId:state.connectionId,
+            tid:state.RBCounter,"_":now()
+            ],
         contentType: 'application/json',
         headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip']
 	]
-	//log.debug "Sending Connect"
     try {
         httpGet(params) { resp ->
-        	//log.debug "Conected Resp: $resp.data"
-            //log.debug "resp.c ${resp.data.C}"
             if(resp.data.C) {
             	state.messageId= resp.data.C
             	log.debug "MessageID: ${state.messageId}"
             }    
-            //state.connectionToken = resp.data.ConnectionToken
-            //log.debug "stateConnectionToken: ${state.connectionToken}"
             state.connected = true
-            state.tid = state.tid+1
+            state.RBCounter = state.RBCounter + 1
         }
     } catch (e) {
         log.error "Get Connected went wrong: $e"
+        state.connected = false
     }    
 }
 def getSensiThermostats() {
@@ -258,13 +260,13 @@ def getSensiThermostats() {
         contentType: 'application/json',
 		headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip']        
 	]
-	//log.debug "Get Stats: ${deviceListParams}"
+	log.debug "Get Stats: ${deviceListParams}"
 	def stats = [:]
 	try {
 		httpGet(deviceListParams) { resp ->
         	
 			if (resp.status == 200) {
-            	//log.debug "resp.data.DeviceName: ${resp.data.DeviceName}"
+            	log.debug "resp.data.DeviceName: ${resp.data.DeviceName}"
 				resp.data.each { stat ->
                 	
 					state.sensiSensors = state.sensiSensors == null ? stat.DeviceName : state.sensiSensors <<  stat.DeviceName
@@ -281,73 +283,48 @@ def getSensiThermostats() {
     }
 	state.thermostats = stats
     state.thermostatResponse = stats
-    log.debug "State Thermostats: ${state.thermostats}"
+    //log.debug "State Thermostats: ${state.thermostats}"
 	return stats
 }
 def pollHandler() {
-	log.debug "pollHandler()"
+	//log.debug "pollHandler()"
 	pollChildren(null) // Hit the sensi API for update on all thermostats
 
 }
 
 def pollChildren(child = null) {
+	
     def myDevices = getChildDevices()
     myDevices.each { individualDevice ->
-    	log.debug "In mydevices"
         def thermostatIdsString = individualDevice.device.deviceNetworkId
-        log.debug "polling children: $thermostatIdsString"
-        def requestBody = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"Subscribe\",\"A\":[\"${thermostatIdsString}\"],\"I\":0}"]
-        def requestBody2 = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"Subscribe\",\"A\":[\"${thermostatIdsString}\"],\"I\":1}"]
-        def requestBody3 = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"Unsubscribe\",\"A\":[\"${thermostatIdsString}\"],\"I\":2}"]
-
+        
+		def params = []
         def result = false
         if(!state.connected || (state.messageId == null)) {
             getConnected()
         }    
-        def params = [    	
-            uri: getApiEndpoint(),
-            path: '/realtime/send',
-            query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]",connectionId:state.connectionId],
-            headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip','Content-Type':'application/x-www-form-urlencoded',"X-Requested-With":"XMLHttpRequest"],
-            body: requestBody
-        ]
-
-        try {
-
-            httpPost(params) { resp ->
-                log.debug "resp 1: ${resp.data}"
-            }
-            params.body = requestBody2
-            httpPost(params) { resp ->
-                log.debug "resp 2: ${resp.data}"
-            }
-            state.tid = state.tid+1
-        } catch (e) {
-            log.error "Poll Subscribe went wrong: $e"
-            state.connected = false
-        }
+		getSubscribed(thermostatIdsString)
         params = [
             uri: getApiEndpoint(),
             path: '/realtime/poll',
             query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]"
-                ,connectionId:state.connectionId,messageId:state.messageId,tid:state.tid,'_':now()],
+                ,connectionId:state.connectionId,messageId:state.messageId,tid:state.RBCounter,'_':now()],
             headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip','Content-Type':'application/x-www-form-urlencoded',"X-Requested-With":"XMLHttpRequest"]
         ]
         if(state.GroupsToken) {
             params.query = [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]"
-                ,connectionId:state.connectionId,messageId:state.messageId,GroupsToken:state.GroupsToken,tid:state.tid,'_':now()]
+                ,connectionId:state.connectionId,messageId:state.messageId,GroupsToken:state.GroupsToken,tid:state.RBCounter,'_':now()]
         }
 
         try{
             httpGet(params) { resp ->
                 if(resp.data.M[0].A[1]) {
-                    //state.connected = false           	
-                    log.info "Final Poll ${resp.data.M[0].A[1]}"
-                    //log.info "state.thermostats[${thermostatIdsString}] = data"
                     state.thermostatResponse[thermostatIdsString] = resp.data.M[0].A[1]
+
                 }
                 if(resp.data.C) {            	
                     state.messageId = resp.data.C
+                    
                 }
                 if(resp.data.G) {
                     state.GroupsToken = resp.data.G
@@ -356,44 +333,88 @@ def pollChildren(child = null) {
                     result = true
                 }
             }
-            state.tid = state.tid+1
+            state.RBCounter = state.RBCounter + 1
         } catch (e) {
             log.trace "Exception polling children: " + e
             state.connected = false        
         }
-        params = [    	
-            uri: getApiEndpoint(),
-            path: '/realtime/send',
-            query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]",connectionId:state.connectionId],
-            headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip','Content-Type':'application/x-www-form-urlencoded',"X-Requested-With":"XMLHttpRequest"],
-            body: requestBody3
-        ]
-
-        try {
-
-            httpPost(params) { resp ->
-                log.debug "resp 3: ${resp.data}"
-            }
-        } 
-        catch (e) {
-        	log.trace "Exception unsubscribing " + e
-        	state.connected = false
-    	}
+        getUnsubscribed(thermostatIdsString)
+        
     }    
-	return result
+	return true
+}
+def getSubscribed(thermostatIdsString) {
+	if(!state.connected) { getConnected() }
+    if( state.RBCounter > 50) {
+    	state.RBCounter = 0
+    }
+    def requestBody = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"Subscribe\",\"A\":[\"${thermostatIdsString}\"],\"I\":$state.RBCounter}"]
+    state.RBCounter = state.RBCounter + 1
+    def requestBody2 = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"Subscribe\",\"A\":[\"${thermostatIdsString}\"],\"I\":$state.RBCounter}"]
+    state.RBCounter = state.RBCounter + 1
+
+
+    def params = [    	
+        uri: getApiEndpoint(),
+        path: '/realtime/send',
+        query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]",connectionId:state.connectionId],
+        headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip','Content-Type':'application/x-www-form-urlencoded',"X-Requested-With":"XMLHttpRequest"],
+        body: requestBody
+    ]
+
+    try {
+
+        httpPost(params) { resp ->
+            //log.debug "resp 1: ${resp.data}"
+        }
+        //            params.body = requestBody2
+        //            httpPost(params) { resp ->
+        //                log.debug "resp 2: ${resp.data}"
+        //            }
+        state.RBCounter = state.RBCounter+1
+    } catch (e) {
+        log.error "Poll Subscribe went wrong: $e"
+        state.connected = false
+        runIn(30,poll)
+    }
 }
 
+def getUnsubscribed(thermostatIdsString) {
+
+    //Unsubscribe from this device
+    def requestBody3 = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"Unsubscribe\",\"A\":[\"${thermostatIdsString}\"],\"I\":$state.RBCounter}"]
+    def params = [    	
+        uri: getApiEndpoint(),
+        path: '/realtime/send',
+        query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]",connectionId:state.connectionId],
+        headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip','Content-Type':'application/x-www-form-urlencoded',"X-Requested-With":"XMLHttpRequest"],
+        body: requestBody3
+    ]
+	state.RBCounter = state.RBCounter + 1
+    try {
+
+        httpPost(params) { resp ->
+            log.debug "resp 3: ${resp.data}"
+        }
+    } 
+    catch (e) {
+        log.trace "Exception unsubscribing " + e
+        state.connected = false
+        runIn(30,poll)
+    }
+        
+}	
 // Poll Child is invoked from the Child Device itself as part of the Poll Capability
 def pollChild() {
 	def devices = getChildDevices()
 	
 	if (pollChildren()) {
 		devices.each { child ->
-        	return null
+        	//log.info "Checking stR for dni: ${child.device.deviceNetworkId}"
             if(state.thermostatResponse[child.device.deviceNetworkId] != null) {
                 def tData = state.thermostatResponse[child.device.deviceNetworkId]
-                log.info "pollChild(child)>> data for ${child.device.deviceNetworkId} : ${tData.data}"
-                child.generateEvent(tData.data) //parse received message from parent
+                //log.info "pollChild(child)>> data for ${child.device.deviceNetworkId} : ${tData}"
+                child.generateEvent(tData) //parse received message from parent
             } else if(state.thermostatResponse[child.device.deviceNetworkId] == null) {
                 log.error "ERROR: Device connection removed? no data for ${child.device.deviceNetworkId}"
                 return null
@@ -402,6 +423,8 @@ def pollChild() {
 		}
 	} else {
 		log.info "ERROR: pollChildren()"
+        state.connected = false
+        runIn(30,poll)
 		return null
 	}
 
@@ -412,197 +435,146 @@ void poll() {
 }
 
 def availableModes(child) {
-	debugEvent ("atomicState.thermostats = ${state.thermostatResponse}")
-	debugEvent ("Child DNI = ${child.device.deviceNetworkId}")
 
-	def tData = state.thermostatResponse[child.device.deviceNetworkId]
 
-	debugEvent("Data = ${tData}")
-
-	if(!tData) {
-		log.error "ERROR: Device connection removed? no data for ${child.device.deviceNetworkId} after polling"
-		return null
-	}
-
-	def modes = ["off"]
-
-    if (tData.data.heatMode) {
-        modes.add("heat")
-    }
-    if (tData.data.coolMode) {
-        modes.add("cool")
-    }
-    if (tData.data.autoMode) {
-        modes.add("auto")
-    }
-    if (tData.data.auxHeatMode) {
-        modes.add("auxHeatOnly")
-    }
+	def modes = ["off", "heat", "cool", "aux", "auto"]
 
     return modes
 }
 
 def currentMode(child) {
-	debugEvent ("atomicState.Thermos = ${state.thermostats}")
+	debugEvent ("state.Thermos = ${state.thermostats}")
 	debugEvent ("Child DNI = ${child.device.deviceNetworkId}")
 
-	def tData = state.thermostatResponse[child.device.deviceNetworkId]
+	def tData = state.thermostatResponse[child.device.deviceNetworkId]?.EnvironmentControls
 
-	debugEvent("Data = ${tData}")
+	//debugEvent("Data = ${tData}")
 
 	if(!tData) {
 		log.error "ERROR: Device connection removed? no data for ${child.device.deviceNetworkId} after polling"
 		return null
 	}
 
-	def mode = tData.data.thermostatMode
+	def mode = tData?.SystemMode
 	return mode
 }
 
-def getChildDeviceIdsString() {
-	return thermostats.collect { it.split(/\./).last() }.join(',')
-}
-
-def toJson(Map m) {
-    return groovy.json.JsonOutput.toJson(m)
-}
-
-def toQueryString(Map m) {
-	return m.collect { k, v -> "${k}=${URLEncoder.encode(v.toString())}" }.sort().join("&")
-}
-
-private void saveTokenAndResumeAction(json) {
-    log.debug "token response json: $json"
-    if (json) {
-        debugEvent("Response = $json")
-        atomicState.refreshToken = json?.refresh_token
-        atomicState.authToken = json?.access_token
-        if (atomicState.action) {
-            log.debug "got refresh token, executing next action: ${atomicState.action}"
-            "${atomicState.action}"()
-        }
-    } else {
-        log.warn "did not get response body from refresh token response"
-    }
-    atomicState.action = ""
-}
-
 /**
- * Executes the resume program command on the Ecobee thermostat
+ * Executes the cmdString and cmdVal
  * @param deviceId - the ID of the device
+ * @cmdString is passed directly to Sensi Web
+ * @cmdVal is the value to send on.
  *
  * @retrun true if the command was successful, false otherwise.
  */
-boolean resumeProgram(deviceId) {
-    def payload = [
-        selection: [
-            selectionType: "thermostats",
-            selectionMatch: deviceId,
-            includeRuntime: true
-        ],
-        functions: [
-            [
-                type: "resumeProgram"
-            ]
-        ]
+
+boolean setStringCmd(deviceId, cmdString, cmdVal) {
+	getConnected()
+    getSubscribed(deviceId)
+    def result = sendDniStringCmd(deviceId,cmdString,cmdVal)
+    log.debug "Setstring ${result}"
+    getUnsubscribed(deviceId)
+    return result
+}
+boolean setTempCmd(deviceId, cmdString, cmdVal) {
+	getConnected()
+    getSubscribed(deviceId)
+    def result = sendDniValue(deviceId,cmdString,cmdVal)
+    log.debug "Setstring ${result}"
+    getUnsubscribed
+    return result
+}
+boolean sendDniValue(thermostatIdsString,cmdString,cmdVal) {
+	def result = false
+    def requestBody = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"$cmdString\",\"A\":[\"${thermostatIdsString}\",$cmdVal,\"$location.temperatureScale\"],\"I\":$state.RBCounter}"]
+    
+	log.debug "sendDNIValue body: ${requestBody}"
+    def params = [    	
+        uri: getApiEndpoint(),
+        path: '/realtime/send',
+        query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]",connectionId:state.connectionId],
+        headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip','Content-Type':'application/x-www-form-urlencoded',"X-Requested-With":"XMLHttpRequest"],
+        body: requestBody
     ]
-    return sendCommandToEcobee(payload)
+
+    try {
+
+        httpPost(params) { resp ->
+            
+            if (resp.data.I.toInteger() == state.RBCounter.toInteger()) {
+            	result = true
+            }
+            state.RBCounter = state.RBCounter + 1
+        }
+    } catch (e) {
+        log.error "Send DNI Command went wrong: $e"
+        state.connected = false
+        state.RBCounter = state.RBCounter + 1
+
+    }
+    
+    return result
+}
+boolean sendDniStringCmd(thermostatIdsString,cmdString,cmdVal) {
+	def result = false
+    def requestBody = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"$cmdString\",\"A\":[\"${thermostatIdsString}\",\"$cmdVal\"],\"I\":$state.RBCounter}"]
+    
+    def params = [    	
+        uri: getApiEndpoint(),
+        path: '/realtime/send',
+        query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]",connectionId:state.connectionId],
+        headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip','Content-Type':'application/x-www-form-urlencoded',"X-Requested-With":"XMLHttpRequest"],
+        body: requestBody
+    ]
+
+    try {
+
+        httpPost(params) { resp ->
+            
+            if (resp.data.I.toInteger() == state.RBCounter.toInteger()) {
+            	result = true
+            }
+            state.RBCounter = state.RBCounter + 1
+        }
+    } catch (e) {
+        log.error "Send DNI Command went wrong: $e"
+        state.connected = false
+        state.RBCounter = state.RBCounter + 1
+        runIn(30, poll)
+
+    }
+    log.debug "Send Function : $result"
+    return result
+}
+
+
+def getChildName()           { return "Sensi Thermostat" }
+def getServerUrl()           { return "https://graph.api.smartthings.com" }
+def getApiEndpoint()		 { return "https://bus-serv.sensicomfort.com" }
+
+def debugEvent(message, displayEvent = false) {
+	def results = [
+		name: "appdebug",
+		descriptionText: message,
+		displayed: displayEvent
+	]
+	log.debug "Generating AppDebug Event: ${results}"
+	sendEvent (results)
+}
+
+def sendActivityFeeds(notificationMessage) {
+	def devices = getChildDevices()
+	devices.each { child ->
+		child.generateActivityFeedsEvent(notificationMessage) //parse received message from parent
+	}
 }
 
 /**
- * Executes the set hold command on the Ecobee thermostat
- * @param heating - The heating temperature to set in fahrenheit
- * @param cooling - the cooling temperature to set in fahrenheit
- * @param deviceId - the ID of the device
- * @param sendHoldType - the hold type to execute
- *
- * @return true if the command was successful, false otherwise
+ * Stores data about the thermostats in atomicState.
+ * @param thermostats - a list of thermostats as returned from the Ecobee API
  */
-boolean setHold(heating, cooling, deviceId, sendHoldType) {
-    // Ecobee requires that temp values be in fahrenheit multiplied by 10.
-    int h = heating * 10
-    int c = cooling * 10
+ 
 
-    def payload = [
-        selection: [
-            selectionType: "thermostats",
-            selectionMatch: deviceId,
-            includeRuntime: true
-        ],
-        functions: [
-            [
-                type: "setHold",
-                params: [
-                    coolHoldTemp: c,
-                    heatHoldTemp: h,
-                    holdType: sendHoldType
-                ]
-            ]
-        ]
-    ]
-
-    return sendCommandToEcobee(payload)
-}
-
-/**
- * Executes the set fan mode command on the Ecobee thermostat
- * @param heating - The heating temperature to set in fahrenheit
- * @param cooling - the cooling temperature to set in fahrenheit
- * @param deviceId - the ID of the device
- * @param sendHoldType - the hold type to execute
- * @param fanMode - the fan mode to set to
- *
- * @return true if the command was successful, false otherwise
- */
-boolean setFanMode(heating, cooling, deviceId, sendHoldType, fanMode) {
-    // Ecobee requires that temp values be in fahrenheit multiplied by 10.
-    int h = heating * 10
-    int c = cooling * 10
-
-    def payload = [
-        selection: [
-            selectionType: "thermostats",
-            selectionMatch: deviceId,
-            includeRuntime: true
-        ],
-        functions: [
-            [
-                type: "setHold",
-                params: [
-                    coolHoldTemp: c,
-                    heatHoldTemp: h,
-                    holdType: sendHoldType,
-                    fan: fanMode
-                ]
-            ]
-        ]
-    ]
-
-	return sendCommandToEcobee(payload)
-}
-
-/**
- * Sets the mode of the Ecobee thermostat
- * @param mode - the mode to set to
- * @param deviceId - the ID of the device
- *
- * @return true if the command was successful, false otherwise
- */
-boolean setMode(mode, deviceId) {
-    def payload = [
-        selection: [
-            selectionType: "thermostats",
-            selectionMatch: deviceId,
-            includeRuntime: true
-        ],
-        thermostat: [
-            settings: [
-                hvacMode: mode
-            ]
-        ]
-    ]
-	return sendCommandToEcobee(payload)
-}
 
 /**
  * Makes a request to the Ecobee API to actuate the thermostat.
@@ -612,6 +584,7 @@ boolean setMode(mode, deviceId) {
  *
  * @return true if the command was accepted by Ecobee without error, false otherwise.
  */
+/*
 private boolean sendCommandToEcobee(Map bodyParams) {
 	def isSuccess = false
 	def cmdParams = [
@@ -653,31 +626,20 @@ private boolean sendCommandToEcobee(Map bodyParams) {
     return isSuccess
 }
 
-def getChildName()           { return "Sensi Thermostat" }
-def getServerUrl()           { return "https://graph.api.smartthings.com" }
-def getShardUrl()            { return getApiServerUrl() }
-def getApiTestEndpoint()         { return "https://tnrtkrucm4ig.runscope.net" }
-def getApiEndpoint()		 { return "https://bus-serv.sensicomfort.com" }
 
-def debugEvent(message, displayEvent = false) {
-	def results = [
-		name: "appdebug",
-		descriptionText: message,
-		displayed: displayEvent
-	]
-	log.debug "Generating AppDebug Event: ${results}"
-	sendEvent (results)
+
+
+def toJson(Map m) {
+    return groovy.json.JsonOutput.toJson(m)
 }
 
-
-/**
- * Stores data about the thermostats in atomicState.
- * @param thermostats - a list of thermostats as returned from the Ecobee API
- */
+def toQueryString(Map m) {
+	return m.collect { k, v -> "${k}=${URLEncoder.encode(v.toString())}" }.sort().join("&")
+}
 private void storeThermostatData(thermostats) {
     log.trace "Storing thermostat data: $thermostats"
     def data
-    atomicState.thermostats = thermostats.inject([:]) { collector, stat ->
+    state.thermostats = thermostats.inject([:]) { collector, stat ->
         def dni = [ app.id, stat.identifier ].join('.')
         log.debug "updating dni $dni"
 
@@ -727,9 +689,28 @@ def convertFtoC (tempF) {
 	return String.format("%.1f", (Math.round(((tempF - 32)*(5/9)) * 2))/2)
 }
 
-def sendActivityFeeds(notificationMessage) {
-	def devices = getChildDevices()
-	devices.each { child ->
-		child.generateActivityFeedsEvent(notificationMessage) //parse received message from parent
-	}
+*/
+
+/**
+ * Sets the mode of the Ecobee thermostat
+ * @param mode - the mode to set to
+ * @param deviceId - the ID of the device
+ *
+ * @return true if the command was successful, false otherwise
+ 
+boolean setMode(mode, deviceId) {
+    def payload = [
+        selection: [
+            selectionType: "thermostats",
+            selectionMatch: deviceId,
+            includeRuntime: true
+        ],
+        thermostat: [
+            settings: [
+                hvacMode: mode
+            ]
+        ]
+    ]
+	return sendCommandToEcobee(payload)
 }
+*/
