@@ -124,7 +124,7 @@ metadata {
 			state "humidity", label:'${currentValue}%'
 		}
 		main ("temperature")
-		details(["temperature", "upButtonControl", "mode", "thermostatSetpoint","fanMode","downButtonControl","resumeProgram", "humidity",  "refresh","currentStatus"])
+		details(["temperature", "upButtonControl", "mode", "thermostatSetpoint","fanMode","downButtonControl","resumeProgram", "humidity",  "refresh","heatingSetpoint","coolingSetpoint","currentStatus"])
 	}
 
 	preferences {
@@ -304,9 +304,14 @@ void setHeatingSetpoint(setpoint) {
     //"on" means the schedule will not run
     //"temporary" means do nothing special"
     //"off" means do nothing special
-	def sendHoldType = getDataByName("thermostatHoldMode")
-    if(sendHoldType == "on") {
-    	parent.setTempCmd(deviceId, "SetScheduleMode", "Off")
+	def currentHoldMode = getDataByName("thermostatHoldMode")
+    def desiredHoldType = holdType == null ? "temporary" : holdType
+    //log.debug "holdType is: ${holdType} des Hold type is: ${desiredHoldType}"
+    if( (desiredHoldType == "Permanent") && (currentHoldMode != "on")) {
+    	parent.setStringCmd(deviceId, "SetScheduleMode", "Off")
+        sendEvent(name:"thermostatHoldMode", value: "on")
+    } else {
+    	sendEvent(name:"thermostatHoldMode", value: "temporary")
     }
     
     
@@ -322,7 +327,7 @@ void setHeatingSetpoint(setpoint) {
 		sendEvent("name":"heatingSetpoint", "value":heatingSetpoint, "unit":location.temperatureScale)
 		log.debug "Done setHeatingSetpoint: ${heatingSetpoint}"
         
-        runIn(20,poll)
+        runIn(3,poll)
 
 	} else {
 		log.error "Error setHeatingSetpoint(setpoint)"
@@ -348,7 +353,18 @@ void setCoolingSetpoint(setpoint) {
 	if (heatingSetpoint >= coolingSetpoint) {
 		heatingSetpoint = coolingSetpoint
 	}
-
+    //"on" means the schedule will not run
+    //"temporary" means do nothing special"
+    //"off" means do nothing special
+	def currentHoldMode = getDataByName("thermostatHoldMode")
+    def desiredHoldType = holdType == null ? "temporary" : holdType
+    //log.debug "holdType is: ${holdType} des Hold type is: ${desiredHoldType}"
+    if( (desiredHoldType == "Permanent") && (currentHoldMode != "on")) {
+    	parent.setStringCmd(deviceId, "SetScheduleMode", "Off")
+        sendEvent(name:"thermostatHoldMode", value: "on")
+    } else {
+    	sendEvent(name:"thermostatHoldMode", value: "temporary")
+    }
 	def coolingValue = location.temperatureScale == "C"? convertCtoF(coolingSetpoint) : coolingSetpoint
 	def heatingValue = location.temperatureScale == "C"? convertCtoF(heatingSetpoint) : heatingSetpoint
 	if ( thermostatMode == "auto") {
@@ -363,7 +379,7 @@ void setCoolingSetpoint(setpoint) {
 	if (parent.setTempCmd(deviceId, cmdString, coolingSetpoint)) {
 		sendEvent("name":"coolingSetpoint", "value":coolingSetpoint, "unit":location.temperatureScale)
 		log.debug "Done setCoolingSetpoint: ${coolingSetpoint}"
-		runIn(5,poll)
+		runIn(3,poll)
 	} else {
 		log.error "Error setCoolingSetpoint(setpoint)"
 	}
@@ -714,7 +730,7 @@ void raiseSetpoint() {
 		sendEvent("name":"thermostatSetpoint", "value":targetvalue, "unit":location.temperatureScale, displayed: false)
 		log.info "In mode $mode raiseSetpoint() to $targetvalue"
 
-		runIn(6, "alterSetpoint", [data: [value:targetvalue], overwrite: true]) //when user click button this runIn will be overwrite
+		runIn(3, "alterSetpoint", [data: [value:targetvalue], overwrite: true]) //when user click button this runIn will be overwrite
 	}
 }
 
@@ -764,21 +780,33 @@ void lowerSetpoint() {
 		sendEvent("name":"thermostatSetpoint", "value":targetvalue, "unit":location.temperatureScale, displayed: false)
 		log.info "In mode $mode lowerSetpoint() to $targetvalue"
 
-		runIn(6, "alterSetpoint", [data: [value:targetvalue], overwrite: true]) //when user click button this runIn will be overwrite
+		runIn(3, "alterSetpoint", [data: [value:targetvalue], overwrite: true]) //when user click button this runIn will be overwrite
 	}
 }
 
 //called by raiseSetpoint() and lowerSetpoint()
 void alterSetpoint(temp) {
+	def deviceId = device.deviceNetworkId
 	def mode = device.currentValue("thermostatMode")
 	def sensiMode = device.currentValue("sensiThermostatMode")
-    
+    //"on" means the schedule will not run
+    //"temporary" means do nothing special"
+    //"off" means do nothing special
+	def currentHoldMode = getDataByName("thermostatHoldMode")
+    def desiredHoldType = holdType == null ? "temporary" : holdType
+    log.debug "holdType is: ${holdType} des Hold type is: ${desiredHoldType}"
+    if( (desiredHoldType == "Permanent") && (currentHoldMode != "on")) {
+    	parent.setStringCmd(deviceId, "SetScheduleMode", "Off")
+        sendEvent(name:"thermostatHoldMode", value: "on")
+    } else {
+    	sendEvent(name:"thermostatHoldMode", value: "temporary")
+    }
 	if (mode == "off" ) {
 		log.warn "this mode: $mode does not allow alterSetpoint"
 	} else {
 		def heatingSetpoint = device.currentValue("heatingSetpoint")
 		def coolingSetpoint = device.currentValue("coolingSetpoint")
-		def deviceId = device.deviceNetworkId
+
 
 		def targetHeatingSetpoint
 		def targetCoolingSetpoint
