@@ -101,6 +101,7 @@ def installed() {
 def updated() {
 	log.debug "Updated with settings: ${settings}"
 	unsubscribe()
+    unschedule()
 	initialize()
 }
 
@@ -300,7 +301,7 @@ def pollChildren() {
                 TRACE("pollChildren successful")
 
             } else {
-                log.warn "pollChildren FAILED for $child.device.name"
+                log.warn "pollChildren FAILED for $child.device.label"
                 state.connected = false
                 runIn(30, poll)
             }
@@ -386,7 +387,7 @@ def getUnsubscribed(thermostatIdsString) {
     try {
 
         httpPost(params) { resp ->
-            log.debug "resp 3: ${resp.data}"
+            TRACE( "resp 3: ${resp.data}")
         }
     } 
     catch (e) {
@@ -434,14 +435,14 @@ def pollChild(dni = null) {
     try{
         httpGet(params) { resp ->
         	def httpResp =  resp.data.M[0].A[1] == null ? " " : resp.data.M[0].A[1]
-            if(httpResp) {            	
+            if(httpResp && (httpResp != true)) {            	
                 state.thermostatResponse[thermostatIdsString] = httpResp
                 TRACE("child.generateEvent=$httpResp")
                 def myChild = getChildDevice(dni)
                 myChild.generateEvent(httpResp)
 				result = true
             } else {
-            	TRACE("Unexpected final resp: ${resp.data}")
+            	log.debug "Unexpected final resp: ${resp.data}"
             }
             if(resp.data.C) {            	
                 state.messageId = resp.data.C
