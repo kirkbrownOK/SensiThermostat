@@ -326,23 +326,25 @@ def generateEvent(results) {
         //4 Product
         //5 Schedule
         //6 Settings
-		results.each { name, value ->
-        	//TRACE("name:${name} , value: ${value}")
-        	if(name == "Capabilities") {
-            	parseCapabilities(value)
-            } else if( name == "EnvironmentControls") {
-            	parseEnvironmentControls(value)
-            }  else if( name == "OperationalStatus") {
-            	parseOperationalStatus(value)
-            }  else if( name == "Product") {
-            	parseProduct(value)
-            }  else if( name == "Schedule") {
-            	parseSchedule(value)
-            }  else if( name == "Settings") {
-            	parseSettings(value)
-            }
-        	
-        
+        try{
+            results.each { name, value ->
+                //TRACE("name:${name} , value: ${value}")
+                if(name == "Capabilities") {
+                    parseCapabilities(value)
+                } else if( name == "EnvironmentControls") {
+                    parseEnvironmentControls(value)
+                }  else if( name == "OperationalStatus") {
+                    parseOperationalStatus(value)
+                }  else if( name == "Product") {
+                    parseProduct(value)
+                }  else if( name == "Schedule") {
+                    parseSchedule(value)
+                }  else if( name == "Settings") {
+                    parseSettings(value)
+                }
+          } 
+        }catch(e) {
+          	log.info "No new data"
         }
     }
     generateSetpointEvent()
@@ -635,7 +637,7 @@ void setHeatingSetpoint(setpoint) {
      log.debug "Sending heatingSetpoint: ${heatingSetpoint} mode: ${thermostatMode} string: ${cmdString}"  
      sendEvent("name":"heatingSetpoint", "value":heatingSetpoint, "unit":location.temperatureScale)
     if (parent.setTempCmd(deviceId, cmdString, heatingSetpoint)) {       
-        runIn(5,"poll",[overwrite: true])
+        
         //"on" means the schedule will not run
         //"temporary" means do nothing special"
         //"off" means do nothing special
@@ -660,11 +662,9 @@ void setCoolingSetpoint(setpoint) {
 	TRACE( "***cooling setpoint $setpoint")
     def cmdString = "set"
 	def heatingSetpoint = device.currentValue("heatingSetpoint")
-	if(location.temperatureScale == "F") {
-    	def coolingSetpoint = setpoint.toInteger()
-    } else { 
-    	def coolingSetpoint = setpoint
-    }
+
+    def coolingSetpoint = setpoint.toInteger()
+
 	def deviceId = device.deviceNetworkId
 	def maxCoolingSetpoint = device.currentValue("maxCoolingSetpoint")
 	def minCoolingSetpoint = device.currentValue("minCoolingSetpoint")
@@ -705,8 +705,6 @@ void setCoolingSetpoint(setpoint) {
         } else {
             sendEvent(name:"thermostatHoldMode", value: "temporary")
         }		
-		//log.debug "Done setCoolingSetpoint: ${coolingSetpoint}"
-		runIn(5,"poll",[overwrite: true])
 	} else {
 		log.error "Error setCoolingSetpoint(setpoint)"
 	}
@@ -722,7 +720,7 @@ void resumeProgram() {
     }
 	if (parent.setStringCmd(deviceId,"SetScheduleMode","On")) {
 		sendEvent("name":"thermostatStatus", "value":"setpoint is updating", "description":statusText, displayed: false)
-		runIn(5, "poll")
+		//runIn(5, "poll")
 		//log.debug "resumeProgram() is done"
 	} else {
 		sendEvent("name":"thermostatStatus", "value":"failed resume click refresh", "description":statusText, displayed: false)
@@ -737,7 +735,7 @@ void stopSchedule() {
 	if (parent.setStringCmd(deviceId,"SetScheduleMode","Off")) {
 		sendEvent("name":"thermostatStatus", "value":"setpoint is updating", "description":statusText, displayed: false)
         sendEvent(name:"thermostatHoldMode", value: "on")
-		runIn(5, "poll")
+		//runIn(5, "poll")
 	} else {
 		sendEvent("name":"thermostatStatus", "value":"failed resume click refresh", "description":statusText, displayed: false)
 		log.error "Error resumeProgram() check parent.resumeProgram(deviceId)"
@@ -849,12 +847,12 @@ def off() {
 	def deviceId = device.deviceNetworkId
 	if (parent.setStringCmd (deviceId,"SetSystemMode","Off")) {
 		generateModeEvent("off")
-        runIn(5, "poll")
+        //runIn(5, "poll")
     }
 	else {
 		log.debug "Error setting new mode."
 		def currentMode = device.currentState("thermostatMode")?.value
-		generateModeEvent(currentMode) // reset the tile back
+		//generateModeEvent(currentMode) // reset the tile back
 	}
 	generateSetpointEvent()
 	generateStatusEvent()
@@ -865,12 +863,12 @@ def heat() {
 	def deviceId = device.deviceNetworkId
 	if (parent.setStringCmd (deviceId,"SetSystemMode","Heat")){
 		generateModeEvent("heat")
-        runIn(5, "poll")
+        //runIn(5, "poll")
     }
 	else {
 		log.debug "Error setting new mode."
 		def currentMode = device.currentState("thermostatMode")?.value
-		generateModeEvent(currentMode) // reset the tile back
+		//generateModeEvent(currentMode) // reset the tile back
 	}
 	generateSetpointEvent()
 	generateStatusEvent()
@@ -887,12 +885,12 @@ def auxHeatOnly() {
 	def deviceId = device.deviceNetworkId
 	if (parent.setStringCmd (deviceId,"SetSystemMode","Aux")) {
 		generateModeEvent("aux")
-        runIn(5, "poll")
+        //runIn(5, "poll")
     }
 	else {
 		log.debug "Error setting new mode."
 		def currentMode = device.currentState("thermostatMode")?.value
-		generateModeEvent(currentMode) // reset the tile back
+		//generateModeEvent(currentMode) // reset the tile back
 	}
 	generateSetpointEvent()
 	generateStatusEvent()
@@ -903,12 +901,12 @@ def cool() {
 	def deviceId = device.deviceNetworkId
 	if (parent.setStringCmd (deviceId,"SetSystemMode","Cool")){
 		generateModeEvent("cool")
-        runIn(5, "poll")
+        //runIn(5, "poll")
     }
 	else {
 		log.debug "Error setting new mode."
 		def currentMode = device.currentState("thermostatMode")?.value
-		generateModeEvent(currentMode) // reset the tile back
+		//generateModeEvent(currentMode) // reset the tile back
 	}
 	generateSetpointEvent()
 	generateStatusEvent()
@@ -919,12 +917,12 @@ def auto() {
 	def deviceId = device.deviceNetworkId
 	if (parent.setStringCmd (deviceId,"SetSystemMode","Auto")) {
 		generateModeEvent("auto")
-        runIn(5, "poll")
+        //runIn(5, "poll")
     }
 	else {
 		log.debug "Error setting new mode."
 		def currentMode = device.currentState("thermostatMode")?.value
-		generateModeEvent(currentMode) // reset the tile back
+		//generateModeEvent(currentMode) // reset the tile back
 	}
     
 	generateSetpointEvent()
@@ -938,11 +936,10 @@ def fanOn() {
 	def cmdString = "SetFanMode"
 	if (parent.setStringCmd( deviceId,cmdString,cmdVal)) {
 		sendEvent([name: "thermostatFanMode", value: "on", descriptionText: "${device.name} sent ${cmdString} ${cmdVal}"])
-        runIn(5, "poll")
 	} else {
 		log.debug "Error setting new mode."
 		def currentFanMode = device.currentState("thermostatFanMode")?.value
-		sendEvent([name: "thermostatFanMode", value: currentFanMode, descriptionText: "${device.name} sent ${cmdString} ${cmdVal}"])
+		//sendEvent([name: "thermostatFanMode", value: currentFanMode, descriptionText: "${device.name} sent ${cmdString} ${cmdVal}"])
 	}
 
 }
@@ -954,11 +951,11 @@ def fanAuto() {
 	def cmdString = "SetFanMode"
 	if (parent.setStringCmd(deviceId,cmdString,cmdVal)) {
 		sendEvent([name: "thermostatFanMode", value: "auto", descriptionText: "${device.name} sent ${cmdString} ${cmdVal}"])
-        runIn(5, "poll")
+
 	} else {
 		log.debug "Error setting new mode."
 		def currentFanMode = device.currentState("thermostatFanMode")?.value
-		sendEvent([name: "thermostatFanMode", value: currentFanMode, descriptionText: "${device.name} sent ${cmdString} ${cmdVal}"])
+		//sendEvent([name: "thermostatFanMode", value: currentFanMode, descriptionText: "${device.name} sent ${cmdString} ${cmdVal}"])
 	}
 
     
@@ -1146,12 +1143,12 @@ void alterSetpoint(temp) {
 		} else {
 			log.error "Error alterSetpoint()"
 			if (mode == "heat" || mode == "aux" || sensiMode == "autoheat"){
-				sendEvent("name": "thermostatSetpoint", "value": heatingSetpoint.toString(), displayed: false)
+				//sendEvent("name": "thermostatSetpoint", "value": heatingSetpoint.toString(), displayed: false)
 			} else if (mode == "cool" || sensiMode == "autocool") {
-				sendEvent("name": "thermostatSetpoint", "value": coolingSetpoint.toString(), displayed: false)
+				//sendEvent("name": "thermostatSetpoint", "value": coolingSetpoint.toString(), displayed: false)
 			}
 		}
-    runIn(5, "poll")    
+    //runIn(5, "poll")    
 	
 	if ( temperatureScaleHasChanged )
 		generateSetpointEvent()
@@ -1210,5 +1207,5 @@ def convertCtoF (tempC) {
 
 
 private def TRACE(message) {
-    //log.debug message
+    log.debug message
 }
