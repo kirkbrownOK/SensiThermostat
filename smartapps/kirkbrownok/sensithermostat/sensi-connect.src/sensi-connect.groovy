@@ -15,10 +15,13 @@
  *	Author: Kirk Brown
  *	Date: 2016-12-24
  *  Date: 2017-01-02  The Sensi Connect App is near fully functional
+ *  Date: 2017-01-07  The Sensi Connect App has been changed to allow individual device polling. 
+ *					  It also polls a thermostat immediately after sending a command
  *
  *
  *	Place the Sensi (Connect) code under the My SmartApps section. Be certain you publish the app for you.
  *  Place the Sensi Thermostat Device Type Handler under My Device Handlers section.
+ *  Be careful that if you change the Name and Namespace you that additionally change it in the addDevice() function
  *
  *
  *  The Program Flow is as follows:
@@ -26,10 +29,10 @@
  *  2.	The SmartApp gets the user’s thermostats and lists them for subscription in the SmartApp.
  *  	a.	The smartApp uses the user’s credentials to get authorized, get a connection token, and then list the thermostats
  *  3.	The User then selects the desired thermostats to add to SmartThings
- *  4.	The SmartApp schedules a refresh/poll of the thermostats every so often. Default is 5 minutes for now. The interface is not official, so polling to often could get noticed.
- *  5.	If any thermostat device is refreshed, then they all get polled from the Sensi API. YOU SHOULD NOT add polling to devices ie don’t use pollster for more than 1 thermostat device -> if you do then all devices will get updated each time.
- *
- *
+ *  4.	The SmartApp schedules a refresh/poll of the thermostats every so often. Default is 5 minutes for now but can be changed in the install configurations. The interface is not official, so polling to often could get noticed.
+ *  XXXXXX Not true any more -> 5.	If any thermostat device is refreshed, then they all get polled from the Sensi API. YOU SHOULD NOT add polling to devices ie don’t use pollster for more than 1 thermostat device -> if you do then all devices will get updated each time.
+ *	6. The devices can be polled by a pollster type SmartApp now and update seperately. However, all of them are still polled at the interval chosen during setup.
+ * There are a large number of debug statements that will turn on if you uncomment the statement inside the TRACE function at the bottom of the code
  */
  
 definition(
@@ -49,7 +52,6 @@ preferences {
 }
 
 def authPage() {
-	//log.debug "authPage()"
 
 	def description
 	def uninstallAllowed = false
@@ -64,19 +66,16 @@ def authPage() {
 			section() {
 				paragraph "Enter your Username and Password for Sensi Connect. Your username and password will be saved in SmartThings in whatever secure/insecure manner SmartThings saves them."
 				input("userName", "string", title:"Sensi Email Address", required:true, displayDuringSetup: true)
-    			input("userPassword", "password", title:"Sensi account password", required:true, displayDuringSetup:true)		
+    			input("userPassword", "password", title:"Sensi account password", required:true, displayDuringSetup:true)	
+                input("pollInput", "number", title: "How often should ST poll Sensi Thermostat?", required: false, displayDureingSetup: true)
 			}
 		}
-        //getAuthorized()
-        //getToken()
 
 }
 def getDevicesPage() {
-	//log.debug "getDevicesPage"
     getConnected()
          
     def stats = getSensiThermostats()
-    //log.debug "thermostat list: $stats"
     return dynamicPage(name: "getDevicesPage", title: "Select Your Thermostats", uninstall: true) {
         section("") {
             paragraph "Tap below to see the list of sensi thermostats available in your sensi account and select the ones you want to connect to SmartThings."
@@ -107,14 +106,13 @@ def updated() {
 
 def initialize() {
 
-	log.debug "initialize"
     getAuthorized()
     getToken()
     
 	def devices = thermostats.collect { dni ->
 		def d = getChildDevice(dni)
 		if(!d) {
-        	log.debug "addChildDevice($app.namespace, ${getChildName()}, $dni, null, [\"label\":\"${state.thermostats[dni]}\" ?: \"Sensi Thermostat\"])"
+        	TRACE( "addChildDevice($app.namespace, ${getChildName()}, $dni, null, [\"label\":\"${state.thermostats[dni]}\" ?: \"Sensi Thermostat\"])")
 			d = addChildDevice(app.namespace, getChildName(), dni, null, ["label":"${state.thermostats[dni]}" ?: "Sensi Thermostat"])
 			log.debug "created ${d.displayName} with id $dni"
 		} else {
@@ -123,7 +121,7 @@ def initialize() {
 		return d
 	}
 
-	log.debug "created ${devices.size()} thermostats."
+	TRACE( "created ${devices.size()} thermostats.")
 
 	def delete  // Delete any that are no longer in settings
 	if(!thermostats) {
@@ -143,13 +141,13 @@ def initialize() {
 	state.reAttempt = 0
 
 	try{
-		pollHandler() //first time polling data data from thermostat
+		poll() //first time polling data data from thermostat
 	} catch (e) {
     	log.warn "Error in first time polling. Could mean something is wrong."
     }
 	//automatically update devices status every 5 mins
-    
-	runEvery5Minutes("poll")
+    def pollRate = pollInput == null ? 5 : pollInput
+	schedule("0 0/${pollRate} * * * ?","poll")
     
 
 }
@@ -181,7 +179,7 @@ def getAuthorized() {
                         	log.debug "Cookie didn't change"
                         } else {
                         	state.myCookie = tempC
-                        	log.debug "My Cookie: ${state.myCookie}"
+                        	//log.debug "My Cookie: ${state.myCookie}"
                         }
                     }
         		}
@@ -220,7 +218,7 @@ def getToken() {
 def getConnected() {
 	getAuthorized()
     getToken()
-	log.debug "GetConnected"
+	log.info "GetConnected"
     
     def params = [
     	
@@ -240,10 +238,11 @@ def getConnected() {
         httpGet(params) { resp ->
             if(resp.data.C) {
             	state.messageId= resp.data.C
-            	log.debug "MessageID: ${state.messageId}"
+            	//log.debug "MessageID: ${state.messageId}"
             }    
             state.connected = true
             state.RBCounter = state.RBCounter + 1
+            state.lastSubscribedDNI = null
         }
     } catch (e) {
         log.error "Get Connected went wrong: $e"
@@ -292,65 +291,56 @@ def pollHandler() {
 
 }
 
-def pollChildren(child = null) {
-	
-    def myDevices = getChildDevices()
-    myDevices.each { individualDevice ->
-        def thermostatIdsString = individualDevice.device.deviceNetworkId
-        
-		def params = []
-        def result = false
-        if(!state.connected || (state.messageId == null)) {
-            getConnected()
-        }    
-		getSubscribed(thermostatIdsString)
-        params = [
-            uri: getApiEndpoint(),
-            path: '/realtime/poll',
-            query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]"
-                ,connectionId:state.connectionId,messageId:state.messageId,tid:state.RBCounter,'_':now()],
-            headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip','Content-Type':'application/x-www-form-urlencoded',"X-Requested-With":"XMLHttpRequest"]
-        ]
-        if(state.GroupsToken) {
-            params.query = [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]"
-                ,connectionId:state.connectionId,messageId:state.messageId,GroupsToken:state.GroupsToken,tid:state.RBCounter,'_':now()]
-        }
-
+def pollChildren() {
+	def devices = getChildDevices()
+	devices.each { child ->
+    	TRACE("pollChild($child.device.deviceNetworkId)")
         try{
-            httpGet(params) { resp ->
-                if(resp.data.M[0].A[1]) {
-                    state.thermostatResponse[thermostatIdsString] = resp.data.M[0].A[1]
+            if(pollChild(child.device.deviceNetworkId)) {
+                TRACE("pollChildren successful")
 
-                }
-                if(resp.data.C) {            	
-                    state.messageId = resp.data.C
-                    
-                }
-                if(resp.data.G) {
-                    state.GroupsToken = resp.data.G
-                }
-                if(resp.status == 200) {
-                    result = true
-                }
+            } else {
+                log.warn "pollChildren FAILED for $child.device.name"
+                state.connected = false
+                runIn(30, poll)
             }
-            state.RBCounter = state.RBCounter + 1
         } catch (e) {
-            log.trace "Exception polling children: " + e
-            state.connected = false        
+        	log.error "Error $e in pollChildren() for $child.device.deviceName"
         }
-        getUnsubscribed(thermostatIdsString)
+    }
+        return true
         
-    }    
-	return true
+        /*
+        if(state.thermostatResponse[child.device.deviceNetworkId] != null) {
+        	def tData = state.thermostatResponse[child.device.deviceNetworkId]
+            TRACE("pollChild(child)>> data for ${child.device.deviceNetworkId} : ${tData}")
+            child.generateEvent(tData) //parse received message from parent
+        } else if(state.thermostatResponse[child.device.deviceNetworkId] == null) {
+                log.error "ERROR: Device connection removed? no data for ${child.device.deviceNetworkId}"
+                return null
+            }
+			
+		}
+		log.info "ERROR: pollChildren()"
+        state.connected = false
+        runIn(30,poll)
+		return null	
+		*/
 }
 def getSubscribed(thermostatIdsString) {
+	if(state.lastSubscribedDNI == thermostatIdsString) {
+    	TRACE("Thermostat already subscribed")
+        return true
+    } else if(state.lastSubscribedDNI != null) {
+    	TRACE("Thermostat not subscribed")
+    	getUnsubscribed(state.lastSubscribedDNI)
+    }
+	TRACE("Getting subscribed to $thermostatIdsString")
 	if(!state.connected) { getConnected() }
     if( state.RBCounter > 50) {
     	state.RBCounter = 0
     }
     def requestBody = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"Subscribe\",\"A\":[\"${thermostatIdsString}\"],\"I\":$state.RBCounter}"]
-    state.RBCounter = state.RBCounter + 1
-    def requestBody2 = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"Subscribe\",\"A\":[\"${thermostatIdsString}\"],\"I\":$state.RBCounter}"]
     state.RBCounter = state.RBCounter + 1
 
 
@@ -365,17 +355,19 @@ def getSubscribed(thermostatIdsString) {
     try {
 
         httpPost(params) { resp ->
-            //log.debug "resp 1: ${resp.data}"
+            TRACE( "Subscribe response: ${resp.data} Expected Response: {I:${state.RBCounter - 1}")
+            if(resp?.data.I?.toInteger() == (state.RBCounter - 1)) {
+				state.lastSubscribedDNI = thermostatIdsString
+                TRACE("Subscribe successfully")
+            } else {
+            	TRACE("Failed to subscribe")
+                state.connected = false
+            }
         }
-        //            params.body = requestBody2
-        //            httpPost(params) { resp ->
-        //                log.debug "resp 2: ${resp.data}"
-        //            }
-        state.RBCounter = state.RBCounter+1
     } catch (e) {
-        log.error "Poll Subscribe went wrong: $e"
+        log.error "getSubscribed failed: $e"
         state.connected = false
-        runIn(30,poll)
+        runIn(30, pollChildData,[data: [value: thermostatIdsString], overwrite: true]) //when user click button this runIn will be overwrite
     }
 }
 
@@ -400,38 +392,77 @@ def getUnsubscribed(thermostatIdsString) {
     catch (e) {
         log.trace "Exception unsubscribing " + e
         state.connected = false
-        runIn(30,poll)
+        runIn(30, pollChildData,[data: [value: thermostatIdsString], overwrite: true]) //when user click button this runIn will be overwrite
     }
+    state.lastSubscribedDNI = null
         
 }	
+def pollChildData(data) {
+	def device = getChildDevice(data.value)
+	TRACE("Scheduled re-poll of $device.deviceLabel")
+    pollChild(data.value)
+}
 // Poll Child is invoked from the Child Device itself as part of the Poll Capability
-def pollChild() {
-	def devices = getChildDevices()
+// If no dni is passed it will call pollChildren and poll all devices
+def pollChild(dni = null) {
 	
-	if (pollChildren()) {
-		devices.each { child ->
-        	//log.info "Checking stR for dni: ${child.device.deviceNetworkId}"
-            if(state.thermostatResponse[child.device.deviceNetworkId] != null) {
-                def tData = state.thermostatResponse[child.device.deviceNetworkId]
-                //log.info "pollChild(child)>> data for ${child.device.deviceNetworkId} : ${tData}"
-                child.generateEvent(tData) //parse received message from parent
-            } else if(state.thermostatResponse[child.device.deviceNetworkId] == null) {
-                log.error "ERROR: Device connection removed? no data for ${child.device.deviceNetworkId}"
-                return null
-            }
-			
-		}
-	} else {
-		log.info "ERROR: pollChildren()"
-        state.connected = false
-        runIn(30,poll)
-		return null
-	}
+	if(dni == null) {
+    	TRACE("dni in pollChild is $dni")
+    	pollChildren()
+        return
+    }
+    def thermostatIdsString = dni
 
+    def params = []
+    def result = false
+    if(!state.connected || (state.messageId == null)) {
+        getConnected()
+    }    
+    getSubscribed(thermostatIdsString)
+    params = [
+        uri: getApiEndpoint(),
+        path: '/realtime/poll',
+        query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]"
+                ,connectionId:state.connectionId,messageId:state.messageId,tid:state.RBCounter,'_':now()],
+        headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip','Content-Type':'application/x-www-form-urlencoded',"X-Requested-With":"XMLHttpRequest"]
+    ]
+    if(state.GroupsToken) {
+        params.query = [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]"
+                        ,connectionId:state.connectionId,messageId:state.messageId,GroupsToken:state.GroupsToken,tid:state.RBCounter,'_':now()]
+    }
+
+    try{
+        httpGet(params) { resp ->
+        	def httpResp =  resp.data.M[0].A[1] == null ? " " : resp.data.M[0].A[1]
+            if(httpResp) {            	
+                state.thermostatResponse[thermostatIdsString] = httpResp
+                TRACE("child.generateEvent=$httpResp")
+                def myChild = getChildDevice(dni)
+                myChild.generateEvent(httpResp)
+				result = true
+            } else {
+            	TRACE("Unexpected final resp: ${resp.data}")
+            }
+            if(resp.data.C) {            	
+                state.messageId = resp.data.C
+
+            }
+            if(resp.data.G) {
+                state.GroupsToken = resp.data.G
+            }
+        }
+        state.RBCounter = state.RBCounter + 1
+    } catch (e) {
+        log.trace "Exception polling child $e repoll in 30 seconds"
+        state.connected = false //This will trigger new authentication next time the poll occurs   
+        runIn(30, pollChildData,[data: [value: thermostatIdsString], overwrite: true]) //when user click button this runIn will be overwrite
+    }
+            
+	return result
 }
 
 void poll() {
-	pollChild()
+	pollChildren()
 }
 
 def availableModes(child) {
@@ -469,26 +500,30 @@ def currentMode(child) {
  */
 
 boolean setStringCmd(deviceId, cmdString, cmdVal) {
-	getConnected()
+	//getConnected()
     getSubscribed(deviceId)
     def result = sendDniStringCmd(deviceId,cmdString,cmdVal)
     log.debug "Setstring ${result}"
-    getUnsubscribed(deviceId)
+    //The sensi web app immediately polls the thermostat for updates after send before unsubscribe
+    pollChild(deviceId)
+    //getUnsubscribed(deviceId)
     return result
 }
 boolean setTempCmd(deviceId, cmdString, cmdVal) {
-	getConnected()
+	//getConnected()
     getSubscribed(deviceId)
     def result = sendDniValue(deviceId,cmdString,cmdVal)
     log.debug "Setstring ${result}"
-    getUnsubscribed
+    //The sensi web app immediately polls the thermostat for updates after send before unsubscribe
+    pollChild(deviceId)
+    //getUnsubscribed
     return result
 }
 boolean sendDniValue(thermostatIdsString,cmdString,cmdVal) {
 	def result = false
     def requestBody = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"$cmdString\",\"A\":[\"${thermostatIdsString}\",$cmdVal,\"$location.temperatureScale\"],\"I\":$state.RBCounter}"]
     
-	log.debug "sendDNIValue body: ${requestBody}"
+	TRACE( "sendDNIValue body: ${requestBody}")
     def params = [    	
         uri: getApiEndpoint(),
         path: '/realtime/send',
@@ -540,10 +575,10 @@ boolean sendDniStringCmd(thermostatIdsString,cmdString,cmdVal) {
         log.error "Send DNI Command went wrong: $e"
         state.connected = false
         state.RBCounter = state.RBCounter + 1
-        runIn(30, poll)
+        runIn(30, pollChildData,[data: [value: thermostatIdsString], overwrite: true]) //when user click button this runIn will be overwrite
 
     }
-    log.debug "Send Function : $result"
+    TRACE( "Send Function : $result")
     return result
 }
 
@@ -569,148 +604,6 @@ def sendActivityFeeds(notificationMessage) {
 	}
 }
 
-/**
- * Stores data about the thermostats in atomicState.
- * @param thermostats - a list of thermostats as returned from the Ecobee API
- */
- 
-
-
-/**
- * Makes a request to the Ecobee API to actuate the thermostat.
- * Used by command methods to send commands to Ecobee.
- *
- * @param bodyParams - a map of request parameters to send to Ecobee.
- *
- * @return true if the command was accepted by Ecobee without error, false otherwise.
- */
-/*
-private boolean sendCommandToEcobee(Map bodyParams) {
-	def isSuccess = false
-	def cmdParams = [
-		uri: apiEndpoint,
-		path: "/1/thermostat",
-		headers: ["Content-Type": "application/json", "Authorization": "Bearer ${atomicState.authToken}"],
-		body: toJson(bodyParams)
-	]
-
-	try{
-        httpPost(cmdParams) { resp ->
-            if(resp.status == 200) {
-                log.debug "updated ${resp.data}"
-                def returnStatus = resp.data.status.code
-                if (returnStatus == 0) {
-                    log.debug "Successful call to ecobee API."
-                    isSuccess = true
-                } else {
-                    log.debug "Error return code = ${returnStatus}"
-                    debugEvent("Error return code = ${returnStatus}")
-                }
-            }
-        }
-	} catch (groovyx.net.http.HttpResponseException e) {
-        log.trace "Exception Sending Json: " + e.response.data.status
-        debugEvent ("sent Json & got http status ${e.statusCode} - ${e.response.data.status.code}")
-        if (e.response.data.status.code == 14) {
-            // TODO - figure out why we're setting the next action to be pollChildren
-            // after refreshing auth token. Is it to keep UI in sync, or just copy/paste error?
-            atomicState.action = "pollChildren"
-            log.debug "Refreshing your auth_token!"
-            refreshAuthToken()
-        } else {
-            debugEvent("Authentication error, invalid authentication method, lack of credentials, etc.")
-            log.error "Authentication error, invalid authentication method, lack of credentials, etc."
-        }
-    }
-
-    return isSuccess
+private def TRACE(message) {
+    //log.debug message
 }
-
-
-
-
-def toJson(Map m) {
-    return groovy.json.JsonOutput.toJson(m)
-}
-
-def toQueryString(Map m) {
-	return m.collect { k, v -> "${k}=${URLEncoder.encode(v.toString())}" }.sort().join("&")
-}
-private void storeThermostatData(thermostats) {
-    log.trace "Storing thermostat data: $thermostats"
-    def data
-    state.thermostats = thermostats.inject([:]) { collector, stat ->
-        def dni = [ app.id, stat.identifier ].join('.')
-        log.debug "updating dni $dni"
-
-        data = [
-            coolMode: (stat.settings.coolStages > 0),
-            heatMode: (stat.settings.heatStages > 0),
-            deviceTemperatureUnit: stat.settings.useCelsius,
-            minHeatingSetpoint: (stat.settings.heatRangeLow / 10),
-            maxHeatingSetpoint: (stat.settings.heatRangeHigh / 10),
-            minCoolingSetpoint: (stat.settings.coolRangeLow / 10),
-            maxCoolingSetpoint: (stat.settings.coolRangeHigh / 10),
-            autoMode: stat.settings.autoHeatCoolFeatureEnabled,
-            deviceAlive: stat.runtime.connected == true ? "true" : "false",
-            auxHeatMode: (stat.settings.hasHeatPump) && (stat.settings.hasForcedAir || stat.settings.hasElectric || stat.settings.hasBoiler),
-            temperature: (stat.runtime.actualTemperature / 10),
-            heatingSetpoint: stat.runtime.desiredHeat / 10,
-            coolingSetpoint: stat.runtime.desiredCool / 10,
-            thermostatMode: stat.settings.hvacMode,
-            humidity: stat.runtime.actualHumidity,
-            thermostatFanMode: stat.runtime.desiredFanMode
-        ]
-        if (location.temperatureScale == "F") {
-            data["temperature"] = data["temperature"] ? Math.round(data["temperature"].toDouble()) : data["temperature"]
-            data["heatingSetpoint"] = data["heatingSetpoint"] ? Math.round(data["heatingSetpoint"].toDouble()) : data["heatingSetpoint"]
-            data["coolingSetpoint"] = data["coolingSetpoint"] ? Math.round(data["coolingSetpoint"].toDouble()) : data["coolingSetpoint"]
-            data["minHeatingSetpoint"] = data["minHeatingSetpoint"] ? Math.round(data["minHeatingSetpoint"].toDouble()) : data["minHeatingSetpoint"]
-            data["maxHeatingSetpoint"] = data["maxHeatingSetpoint"] ? Math.round(data["maxHeatingSetpoint"].toDouble()) : data["maxHeatingSetpoint"]
-            data["minCoolingSetpoint"] = data["minCoolingSetpoint"] ? Math.round(data["minCoolingSetpoint"].toDouble()) : data["minCoolingSetpoint"]
-            data["maxCoolingSetpoint"] = data["maxCoolingSetpoint"] ? Math.round(data["maxCoolingSetpoint"].toDouble()) : data["maxCoolingSetpoint"]
-
-        }
-
-        if (data?.deviceTemperatureUnit == false && location.temperatureScale == "F") {
-            data["deviceTemperatureUnit"] = "F"
-
-        } else {
-            data["deviceTemperatureUnit"] = "C"
-        }
-
-        collector[dni] = [data:data]
-        return collector
-    }
-    log.debug "updated ${atomicState.thermostats?.size()} thermostats: ${atomicState.thermostats}"
-}
-
-def convertFtoC (tempF) {
-	return String.format("%.1f", (Math.round(((tempF - 32)*(5/9)) * 2))/2)
-}
-
-*/
-
-/**
- * Sets the mode of the Ecobee thermostat
- * @param mode - the mode to set to
- * @param deviceId - the ID of the device
- *
- * @return true if the command was successful, false otherwise
- 
-boolean setMode(mode, deviceId) {
-    def payload = [
-        selection: [
-            selectionType: "thermostats",
-            selectionMatch: deviceId,
-            includeRuntime: true
-        ],
-        thermostat: [
-            settings: [
-                hvacMode: mode
-            ]
-        ]
-    ]
-	return sendCommandToEcobee(payload)
-}
-*/
