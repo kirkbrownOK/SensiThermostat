@@ -67,7 +67,7 @@ def authPage() {
 				paragraph "Enter your Username and Password for Sensi Connect. Your username and password will be saved in SmartThings in whatever secure/insecure manner SmartThings saves them."
 				input("userName", "string", title:"Sensi Email Address", required:true, displayDuringSetup: true)
     			input("userPassword", "password", title:"Sensi account password", required:true, displayDuringSetup:true)	
-                input("pollInput", "number", title: "How often should ST poll Sensi Thermostat?", required: false, displayDureingSetup: true)
+                input("pollInput", "number", title: "How often should ST poll Sensi Thermostat? (minutes)", required: false, displayDureingSetup: true)
 			}
 		}
 
@@ -148,6 +148,10 @@ def initialize() {
     }
 	//automatically update devices status every 5 mins
     def pollRate = pollInput == null ? 5 : pollInput
+    if(pollRate > 59) {
+    	pollRate = 5
+        log.warn "You picked an invalid pollRate: $pollInput minutes. Changed to 5 minutes."
+    }    
 	schedule("0 0/${pollRate} * * * ?","poll")
     
 
