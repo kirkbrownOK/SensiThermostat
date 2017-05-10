@@ -32,6 +32,7 @@ metadata {
 		capability "Refresh"
 		capability "Relative Humidity Measurement"
 		capability "Health Check"
+        capability "Battery"
 
 		command "generateEvent"
 		command "raiseSetpoint"
@@ -64,6 +65,7 @@ metadata {
         
         attribute "sensiThermostatMode", "string"
         attribute "sensiBatteryVoltage", "number"
+        attribute "sensiLowPower", "string" //New Attribute
         attribute "thermostatHoldMode", "string"
         attribute "thermostatOperatingMode", "string"
         attribute "thermostatFanState", "string"
@@ -171,6 +173,7 @@ tiles(scale:2) {
                 ]
         }
         
+        
         standardTile("heatUp", "device.heatingSetpoint", inactiveLabel:false, decoration:"flat") {
             state "default", label:'Heating', icon:"st.custom.buttons.add-icon", action:"heatUp"
         }
@@ -226,14 +229,30 @@ tiles(scale:2) {
             state "default", icon:"st.secondary.refresh", action:"refresh.refresh"
             state "error", icon:"st.secondary.refresh", action:"refresh.refresh", backgroundColor:"#e81e1e" 
         }
-
+        //No clue what a Fully Charged battery is vs a Dead Battery. Guessing from 2 AA nominal 1.5V per unit and 3.0V is adequate
+		valueTile("batteryDisplay", "device.sensiBatteryVoltage", inactiveLabel:false) {
+            state "default", label:'${currentValue}', unit:"V",
+                backgroundColors:[
+                    [value: 2.9, color: "#ff3300"],
+                    [value: 3.07, color: "#ffff00"],
+                    [value: 3.1, color: "#33cc33"],
+                    [value: 3.5, color: "#33cc33"],
+                    [value: 2900, color: "#ff3300"],
+                    [value: 3075, color: "#ffff00"],
+                    [value: 3100, color: "#33cc33"],
+                    [value: 3500, color: "#33cc33"]
+                ]
+        }
+        valueTile("lowBattery", "device.sensiLowPower", inactiveLabel:false, width: 2) {
+            state "default", label:'LowPower: ${currentValue}', unit:"V"
+        }
         main(["temperatureIcon" ])
 
         details(["thermostatFull","temperature", "operatingState", "fanState",
         	"mode", "fanMode", "hold",
             "heatingSetpoint", "heatDown", "heatUp",
-            "coolingSetpoint", "coolDown", "coolUp",
-             
+            "coolingSetpoint", "coolDown", "coolUp", 
+            "batteryDisplay","lowBattery",             
             "refresh"])
     }
 	preferences {
@@ -443,7 +462,7 @@ def parseOperationalStatus(status) {
     def currentFanMode = device.currentValue("thermostatFanMode") == null? "auto" : device.currentValue("thermostatFanMode") 
     try{
     	status.each{ name, value ->
-        	TRACE("Status.name: $name, value: $value")
+        	TRACE("Status: $name, value: $value")
             if(name=="OperatingMode") { 
                 def currentMode = value.toLowerCase()
                 checkSendEvent("sensiThermostatMode",currentMode,"${device.label} Sensi mode set to ${currentMode}")
@@ -474,8 +493,20 @@ def parseOperationalStatus(status) {
                 checkSendEvent("humidity", sendValue, "${device.label} humidity ${sendValue}","%")
             } 
             if(name=="BatteryVoltage") { 
-                def sendValue = value
-                checkSendEvent("sensiBatteryVoltage", sendValue, "${device.label} BatteryVoltage ${sendValue}",null,false)
+                //def sendValue = value //In milliVolts
+                def sendValue = value/1000 // in Volts
+                TRACE("BV is $value and sensiBV is ${sendValue.toFloat().round(1)}")
+                checkSendEvent("sensiBatteryVoltage", sendValue.toFloat().round(1), "${device.label} BatteryVoltage ${sendValue}",null,false)
+                
+            }
+            if(name == "LowPower") {
+            	def sendValue = value
+                checkSendEvent("sensiLowPower", sendValue, "${device.label} LowPower ${sendValue}",null,sendValue)
+                if (sendValue == true) {
+                	checkSendEvent("battery", 0, "${device.label} Battery is Low", null, true)
+                } else {
+                	checkSendEvent("battery", 100, "${device.label} Battery is Not Low", null, false)
+                }
             }
     	}    
     } catch (e) {
@@ -1207,5 +1238,5 @@ def convertCtoF (tempC) {
 
 
 private def TRACE(message) {
-    log.debug message
+    //log.debug message
 }
