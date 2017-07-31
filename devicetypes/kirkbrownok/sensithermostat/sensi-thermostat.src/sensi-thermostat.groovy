@@ -47,7 +47,10 @@ metadata {
         command "coolDown"
         command "refresh"
         command "poll"
-
+        command "setKeypadLockoutOn"
+        command "setKeypadLockoutOff"
+        attribute "keypadLockout", "string" 
+        
 		attribute "thermostatSetpoint", "number"
 		attribute "thermostatStatus", "string"
 		attribute "maxHeatingSetpoint", "number"
@@ -61,6 +64,7 @@ metadata {
         attribute "capabilities", "string"
         attribute "product", "string"
         attribute "settings", "string"
+
         
         
         attribute "sensiThermostatMode", "string"
@@ -202,6 +206,11 @@ tiles(scale:2) {
             state "on", label:'', icon:"st.thermostat.fan-on"
             state "off", label:'', icon:"st.thermostat.fan-off"
         }
+        standardTile("keypadLockout", "device.keypadLockout", inactiveLabel:false, decoration:"flat", width: 2) {
+            state "default", label:'Keypad Unknown', action: "setKeypadLockoutOn"
+            state "on", label:'KEYPAD: LOCKED', action: "setKeypadLockoutOff", nextState: "off"
+            state "off", label:'KEYPAD: UNLOCKED', action: "setKeypadLockoutOn", nextState: "on"
+        }
 
         standardTile("mode", "device.thermostatMode", inactiveLabel:false) {
             state "default", label:'[Mode]'
@@ -225,9 +234,9 @@ tiles(scale:2) {
             state "off", label:'Sensi Schedule', backgroundColor:"#FFFFFF", action:"stopSchedule"
         }
 
-        standardTile("refresh", "device.refresh", inactiveLabel:false, decoration:"flat",width:6, height:2) {
+        standardTile("refresh", "device.refresh", decoration:"flat",width:1, height:1) {
             state "default", icon:"st.secondary.refresh", action:"refresh.refresh"
-            state "error", icon:"st.secondary.refresh", action:"refresh.refresh", backgroundColor:"#e81e1e" 
+            state "error", icon:"st.secondary.refresh", action:"refresh.refresh"
         }
         //No clue what a Fully Charged battery is vs a Dead Battery. Guessing from 2 AA nominal 1.5V per unit and 3.0V is adequate
 		valueTile("batteryDisplay", "device.sensiBatteryVoltage", inactiveLabel:false) {
@@ -252,7 +261,7 @@ tiles(scale:2) {
         	"mode", "fanMode", "hold",
             "heatingSetpoint", "heatDown", "heatUp",
             "coolingSetpoint", "coolDown", "coolUp", 
-            "batteryDisplay","lowBattery",             
+            "batteryDisplay","lowBattery","keypadLockout",           
             "refresh"])
     }
 	preferences {
@@ -360,6 +369,7 @@ def generateEvent(results) {
                     parseSchedule(value)
                 }  else if( name == "Settings") {
                     parseSettings(value)
+                    
                 }
           } 
         }catch(e) {
@@ -516,12 +526,29 @@ def parseOperationalStatus(status) {
 }
 def parseProduct(product) {
 	checkSendEvent("product", product,null,null,false)
+    //Basically not doing anything with product information
+    
 }
 def parseSchedule(schedule) {
 	checkSendEvent("schedule", schedule,null,null,false)
+    //Doing nothing with schedule information-> Can be viewed in the device under the schedule attribute
 }
 def parseSettings(settings) {
 	checkSendEvent("settings",settings,null,null,false)
+    
+    //Added the ability to parse keypadLockout
+    try{
+    	
+    	settings.each{ name, value ->
+        	TRACE("settings.name: $name, value: $value")
+            if(name=="KeypadLockout") { 
+                def curKeypadLockout = value.toLowerCase()
+                checkSendEvent("keypadLockout",curKeypadLockout,"${device.label} keypad lockout to ${curKeypadLockout}")
+            }
+    	}    
+    } catch (e) {
+    	log.debug "Error $e in parseStatus()"
+    }
 }
 def parseMode(cMode) {
 	//Sensi Thermostat returns Auto as AutoHeat or AutoCool? -> I did this in winter. Not sure how AutoCool looks.
@@ -974,6 +1001,35 @@ def fanOn() {
 	}
 
 }
+def setKeypadLockoutOn() {
+	TRACE( "setKeypadLockoutOn()")
+	def cmdVal = "On"
+	def deviceId = device.deviceNetworkId
+	def cmdSetting = "ChangeSetting"
+    def cmdString = "KeypadLockout"
+	if (parent.setSettingsStringCmd( deviceId,cmdSetting,cmdString,cmdVal)) {
+		sendEvent([name: "keypadLockout", value: "On", descriptionText: "${device.name} sent ${cmdSetting} ${cmdString} ${cmdVal}"])
+	} else {
+		log.debug "Error setting keypad lockout."
+		def currentKeypadLockout = device.currentState("keypadLockout")?.value
+		//sendEvent([name: "thermostatFanMode", value: currentFanMode, descriptionText: "${device.name} sent ${cmdString} ${cmdVal}"])
+	}
+}
+
+def setKeypadLockoutOff() {
+	TRACE( "setKeypadLockoutOff()")
+	def cmdVal = "Off"
+	def deviceId = device.deviceNetworkId
+	def cmdSetting = "ChangeSetting"
+    def cmdString = "KeypadLockout"
+	if (parent.setSettingsStringCmd( deviceId,cmdSetting,cmdString,cmdVal)) {
+		sendEvent([name: "keypadLockout", value: "Off", descriptionText: "${device.name} sent ${cmdSetting} ${cmdString} ${cmdVal}"])
+	} else {
+		log.debug "Error setting keypad lockout."
+		def currentKeypadLockout = device.currentState("keypadLockout")?.value
+		//sendEvent([name: "thermostatFanMode", value: currentFanMode, descriptionText: "${device.name} sent ${cmdString} ${cmdVal}"])
+	}
+}
 
 def fanAuto() {
 	TRACE("fanAuto()")
@@ -1238,5 +1294,5 @@ def convertCtoF (tempC) {
 
 
 private def TRACE(message) {
-    //log.debug message
+    log.debug message
 }
