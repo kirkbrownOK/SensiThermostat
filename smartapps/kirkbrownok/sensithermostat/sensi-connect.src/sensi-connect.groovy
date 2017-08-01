@@ -502,6 +502,16 @@ boolean setStringCmd(deviceId, cmdString, cmdVal) {
     getUnsubscribed(deviceId)
     return result
 }
+boolean setSettingsStringCmd(deviceId,cmdSettings, cmdString, cmdVal) {
+	//getConnected()
+    getSubscribed(deviceId)
+    def result = sendDniSettingsStringCmd(deviceId,cmdSettings,cmdString,cmdVal)
+    TRACE( "Setstring ${result}")
+    //The sensi web app immediately polls the thermostat for updates after send before unsubscribe
+    pollChild(deviceId)
+    getUnsubscribed(deviceId)
+    return result
+}
 boolean setTempCmd(deviceId, cmdString, cmdVal) {
 	//getConnected()
     getSubscribed(deviceId)
@@ -574,7 +584,38 @@ boolean sendDniStringCmd(thermostatIdsString,cmdString,cmdVal) {
     TRACE( "Send Function : $result")
     return result
 }
+/* {"H":"thermostat-v1","M":"ChangeSetting","A":["thermostatid is here","KeypadLockout","Off"],"I":8} */
+boolean sendDniSettingsStringCmd(thermostatIdsString,cmdSettings,cmdString,cmdVal) {
+	def result = false
+    def requestBody = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"$cmdSettings\",\"A\":[\"${thermostatIdsString}\",\"$cmdString\",\"$cmdVal\"],\"I\":$state.RBCounter}"]
+    
+    def params = [    	
+        uri: getApiEndpoint(),
+        path: '/realtime/send',
+        query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]",connectionId:state.connectionId],
+        headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip','Content-Type':'application/x-www-form-urlencoded',"X-Requested-With":"XMLHttpRequest"],
+        body: requestBody
+    ]
 
+    try {
+
+        httpPost(params) { resp ->
+            
+            if (resp.data.I.toInteger() == state.RBCounter.toInteger()) {
+            	result = true
+            }
+            state.RBCounter = state.RBCounter + 1
+        }
+    } catch (e) {
+        log.warn "Send DNI Setting String Command went wrong: $e"
+        state.connected = false
+        state.RBCounter = state.RBCounter + 1
+        runIn(30, pollChildData,[data: [value: thermostatIdsString], overwrite: true]) //when user click button this runIn will be overwrite
+
+    }
+    TRACE( "Send Function : $result")
+    return result
+}
 
 def getChildName()           { return "Sensi Thermostat" }
 def getServerUrl()           { return "https://graph.api.smartthings.com" }
