@@ -28,7 +28,8 @@ SA3) Choose SmartApps, then Add a New SmartApp from Code.
 
 SA4) Paste in the code you copied, change anything necessary based on the author's instructions, then PUBLISH it to yourself.
 
-SA5) Make any additional edits according to the author's instructions, such as enabling OAUTH.
+SA5) <strike>Make any additional edits according to the author's instructions, such as enabling OAUTH.</strike> 
+      -THIS SMARTAPP DOES NOT NEED OAUTH. That was from a more generic description of installing custom apps.
 
 Now when you open the official SmartThings mobile app, this new custom smartapp will appear as a choice under My SmartApps in the SmartApp section in the Marketplace.
 
