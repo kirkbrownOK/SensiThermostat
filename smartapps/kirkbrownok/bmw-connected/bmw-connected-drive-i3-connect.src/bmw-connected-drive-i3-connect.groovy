@@ -1,5 +1,5 @@
 /**
- *  Copyright 2016 Kirk Brown
+ *  Copyright 2017 Kirk Brown
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -10,46 +10,39 @@
  *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
  *  for the specific language governing permissions and limitations under the License.
  *
- *	Emerson Sensi Community Created Service Manager
+ *	BMW Connected Drive service manager to create car device
  *
  *	Author: Kirk Brown
- *	Date: 2016-12-24
- *  Date: 2017-01-02  The Sensi Connect App is near fully functional
- *  Date: 2017-01-07  The Sensi Connect App has been changed to allow individual device polling. 
- *					  It also polls a thermostat immediately after sending a command
- *
- *  Date: 2017-05-02  Changed the frequency of subscription/unsubscribe. Any time a new poll or before command subscribe new.
- *
- *	Place the Sensi (Connect) code under the My SmartApps section. Be certain you publish the app for you.
- *  Place the Sensi Thermostat Device Type Handler under My Device Handlers section.
+ *	Date: 2017-9-1
+ *	Place the BMW (Connect) code under the My SmartApps section. Be certain you publish the app for you.
+ *  Place the BMW Car Device Type Handler under My Device Handlers section.
  *  Be careful that if you change the Name and Namespace you that additionally change it in the addChildDevice() function
  *
  *
  *  The Program Flow is as follows:
  *  1.	SmartApp gets user credentials in the install process.
- *  2.	The SmartApp gets the user’s thermostats and lists them for subscription in the SmartApp.
- *  	a.	The smartApp uses the user’s credentials to get authorized, get a connection token, and then list the thermostats
- *  3.	The User then selects the desired thermostats to add to SmartThings
- *  4.	The SmartApp schedules a refresh/poll of the thermostats every so often. Default is 5 minutes for now but can be changed in the install configurations. The interface is not official, so polling to often could get noticed.
- *  XXXXXX Not true any more -> 5.	If any thermostat device is refreshed, then they all get polled from the Sensi API. YOU SHOULD NOT add polling to devices ie don’t use pollster for more than 1 thermostat device -> if you do then all devices will get updated each time.
- *	6. The devices can be polled by a pollster type SmartApp now and update seperately. However, all of them are still polled at the interval chosen during setup.
+ *  2.	The SmartApp gets the user’s car and list it for subscription in the SmartApp. -> I can only afford 1 BMW so i'm writing for 1 car.
+ *  	a.	The smartApp uses the user’s credentials to get authorized, get a connection token, and then list the car
+ *  3.	The User then selects the desired car(s) to add to SmartThings -> Can't test multiple cars, don't intend to write for that.
+ *  4.	The SmartApp schedules a refresh/poll of the car every so often. Default is 60 minutes for now but can be changed in the install configurations. The interface is not official, so polling to often could get noticed.
+ *  5. The car can be polled by a pollster type SmartApp.
  * There are a large number of debug statements that will turn on if you uncomment the statement inside the TRACE function at the bottom of the code
  */
  
 definition(
-		name: "Sensi (Connect)",
-		namespace: "kirkbrownOK/SensiThermostat",
+		name: "BMW Connected Drive i3 (Connect)",
+		namespace: "kirkbrownOK/BMW_Connected",
 		author: "Kirk Brown",
-		description: "Connect your Sensi thermostats to SmartThings.",
+		description: "Connect your BMW i3 to SmartThings.",
 		category: "SmartThings Labs",
-		iconUrl: "http://i.imgur.com/QVbsCpu.jpg",
-		iconX2Url: "http://i.imgur.com/4BfQn6I.jpg",
+		iconUrl: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/44/BMW.svg/1200px-BMW.svg.png",
+		iconX2Url: "https://upload.wikimedia.org/wikipedia/commons/thumb/4/44/BMW.svg/1200px-BMW.svg.png",
 		singleInstance: true
 )
 
 preferences {
-	page(name: "auth", title: "Sensi", nextPage:"", content:"authPage", uninstall: true)
-	page(name: "getDevicesPage", title: "Sensi Devices", nextPage:"", content:"getDevicesPage", uninstall: true, install: true)
+	page(name: "auth", title: "BMW Connected", nextPage:"", content:"authPage", uninstall: true)
+	page(name: "getDevicesPage", title: "BMW Cars", nextPage:"", content:"getDevicesPage", uninstall: true, install: true)
 }
 
 def authPage() {
@@ -60,36 +53,44 @@ def authPage() {
 		description = "You are connected."
 		uninstallAllowed = true
 	} else {
-		description = "Click to enter Sensi Credentials"
+		description = "Click to enter BMW Credentials"
 	}
 
 		return dynamicPage(name: "auth", title: "Login", nextPage: "getDevicesPage", uninstall:uninstallAllowed) {
 			section() {
-				paragraph "Enter your Username and Password for Sensi Connect. Your username and password will be saved in SmartThings in whatever secure/insecure manner SmartThings saves them."
-				input("userName", "string", title:"Sensi Email Address", required:true, displayDuringSetup: true)
-    			input("userPassword", "password", title:"Sensi account password", required:true, displayDuringSetup:true)	
-                input("pollInput", "number", title: "How often should ST poll Sensi Thermostat? (minutes)", required: false, displayDureingSetup: true)
+                paragraph "This connected app is not sanctioned by BMW. It requires api key, and secret from the Android/iPhone app in order to work. "+
+                	"according to edent: \"You can get the i Remote details from either decompiling the Android App or from intercepting communications "+
+                    "between your phone and the BMW server. This is left as an exercise for the reader. see: https://github.com/edent/BMW-i-Remote "+
+                    "The key will look like -> Authorization: Basic APIKEY:APISECRET where APIKEY:APISECRET is a crazy encoded hex string. Use the encoded "
+                    "hex string for the following input."
+                input("encodedSecret", "string", title: " API Key and Secret", required: true, displayDuringSetup: true, defaultValue:"blF2NkNxdHhKdVhXUDc0eGYzQ0p3VUVQOjF6REh4NnVuNGNEanliTEVOTjNreWZ1bVgya0VZaWdXUGNRcGR2RFJwSUJrN3JPSg==")               	
+				paragraph "Enter your Username and Password for BMW Connected Drive. Your username and password will be saved in SmartThings in whatever secure/insecure manner SmartThings saves them."
+				input("userName", "string", title:"BMW Email Address", required:true, displayDuringSetup: true,defaultValue: "tokirk.brown@gmail.com")
+    			input("userPassword", "password", title:"BMW account password", required:true, displayDuringSetup:true,defaultValue:"Transport3")	
+                input("secretAnswer", "password", title:"Answer to your security question from BMW Connected Account", required: true, displayDuringSetup: true, defaultValue:"Iron Druid")
+                input("pollInput", "number", title: "How often should ST poll BMW Connected Drive? (minutes)", required: false, defaultValue: 30, displayDuringSetup: true)
 			}
 		}
 
 }
 def getDevicesPage() {
-    getConnected()
+    getAuthorized()
          
-    def stats = getSensiThermostats()
-    return dynamicPage(name: "getDevicesPage", title: "Select Your Thermostats", uninstall: true) {
+    def myCars = getBMWCars()
+    return dynamicPage(name: "getDevicesPage", title: "Select Your Cars", uninstall: true) {
         section("") {
-            paragraph "Tap below to see the list of sensi thermostats available in your sensi account and select the ones you want to connect to SmartThings."
-            input(name: "thermostats", title:"", type: "enum", required:false, multiple:true, description: "Tap to choose", metadata:[values:stats])
+            paragraph "Tap below to see the list of cars available in your BMW account and select the ones you want to connect to SmartThings."
+            input(name: "cars", title:"", type: "enum", required:false, multiple:true, description: "Tap to choose", metadata:[values:myCars])
             
         }
     }
 }
 
 
-def getThermostatDisplayName(stat) {
-    if(stat?.DeviceName) {
-        return stat.DeviceName.toString()
+def getCarDisplayName(myCar) {
+    if(myCar?.model) {
+    	def nameString = "${myCar.yearOfConstruction} BMW ${myCar.model}"
+        return nameString
     }
     return "Unknown"
 }
@@ -100,6 +101,7 @@ def installed() {
 }
 
 def updated() {
+	state.refresh_token = null
 	log.info "Updated with settings: ${settings}"
 	unsubscribe()
     unschedule()
@@ -109,31 +111,30 @@ def updated() {
 def initialize() {
 
     getAuthorized()
-    getToken()
     
-	def devices = thermostats.collect { dni ->
-		def d = getChildDevice(dni)
+	def devices = cars.collect { vin ->
+		def d = getChildDevice(vin)
 		if(!d) {
-        	TRACE( "addChildDevice($app.namespace, ${getChildName()}, $dni, null, [\"label\":\"${state.thermostats[dni]}\" : \"Sensi Thermostat\"])")
-			d = addChildDevice(app.namespace, getChildName(), dni, null, ["label":"${state.thermostats[dni]}" ?: "Sensi Thermostat"])
-			log.info "created ${d.displayName} with id $dni"
+        	TRACE( "addChildDevice($app.namespace, ${getChildName()}, $vin, null, [\"label\":\"${state.bmwCars[vin]}\" : \"BMW Car\"])")
+			d = addChildDevice(app.namespace, getChildName(), vin, null, ["label":"${state.bmwCars[vin]}" ?: "BMW Car"])
+			log.info "created ${d.displayName} with id $vin"
 		} else {
-			log.info "found ${d.displayName} with id $dni already exists"
+			log.info "found ${d.displayName} with id $vin already exists"
 		}
 		return d
 	}
 
-	TRACE( "created ${devices.size()} thermostats.")
+	TRACE( "created ${devices.size()} car(s).")
 
 	def delete  // Delete any that are no longer in settings
-	if(!thermostats) {
-		log.info "delete thermostats ands sensors"
+	if(!cars) {
+		log.info "delete cars"
 		delete = getAllChildDevices() //inherits from SmartApp (data-management)
 	} else { //delete only thermostat
-		log.info "delete individual thermostat"
-		delete = getChildDevices().findAll { !thermostats.contains(it.deviceNetworkId) }		
+		log.info "delete individual car"
+		delete = getChildDevices().findAll { !cars.contains(it.deviceNetworkId) }		
 	}
-	log.warn "delete: ${delete}, deleting ${delete.size()} thermostats"
+	log.warn "delete: ${delete}, deleting ${delete.size()} cars"
 	delete.each { deleteChildDevice(it.deviceNetworkId) } //inherits from SmartApp (data-management)
 
 	//send activity feeds to tell that device is connected
@@ -143,15 +144,15 @@ def initialize() {
 	state.reAttempt = 0
 
 	try{
-		poll() //first time polling data data from thermostat
+		poll() //first time polling data from device
 	} catch (e) {
     	log.warn "Error in first time polling. Could mean something is wrong."
     }
 	//automatically update devices status every 5 mins
     def pollRate = pollInput == null ? 5 : pollInput
     if(pollRate > 59 || pollRate < 1) {
-    	pollRate = 5
-        log.warn "You picked an invalid pollRate: $pollInput minutes. Changed to 5 minutes."
+    	pollRate = 58
+        log.warn "You picked an invalid pollRate: $pollInput minutes. Changed to 58 minutes."
     }    
 	schedule("0 0/${pollRate} * * * ?","poll")
     
@@ -159,36 +160,63 @@ def initialize() {
 }
 
 def getAuthorized() {
-    def bodyParams = [ Password: "${userPassword}", UserName: "${userName}" ]
-    state.RBCounter = 2
-    state.sendCounter= 0
-    state.GroupsToken = null
-	def deviceListParams = [
-		uri: getApiEndpoint(),
-		path: "/api/authorize",
-		headers: ["Content-Type": "application/json", "Accept": "application/json; version=1, */*; q=0.01", "X-Requested-With":"XMLHttpRequest"],
-		body: [ Password: userPassword, UserName: userName ]
-	]
+	if ( (state.expiresAt > now() )&&( state.refresh_token != null)) {
+    	TRACE("Still authorized-> not refreshing auth\n $now() expires at $state.expiresAt")
+        return
+    }
+    def deviceListParams = [:]
+    if( state.refresh_token == null) {
+    	TRACE("Authorizing using passwords")
+        deviceListParams = [
+            uri: getApiEndpoint(),
+            path: "/webapi/oauth/token/",
+            headers: ["Content-Type": "application/x-www-form-urlencoded","Authorization": "Basic ${encodedSecret}"],
+            body: [grant_type: "password", password: userPassword, username: userName, scope: "remote_services vehicle_data" ]
+        ]
+    } else {
+		TRACE("Authorizing using Refresh Token")
+    	deviceListParams = [
+            uri: getApiEndpoint(),
+            path: "/webapi/oauth/token/",
+            headers: ["Content-Type": "application/x-www-form-urlencoded","Authorization": "Basic ${encodedSecret}"],
+            body: [grant_type: "refresh_token", refresh_token: "${state.refresh_token}"]
+        ]
+    }
 	try {
-		httpPostJson(deviceListParams) { resp ->
-        	//log.debug "Resp Headers: ${resp.headers}"
-        	
+		httpPost(deviceListParams) { resp ->       	
 			if (resp.status == 200) {
-				resp.headers.each {
-            		//log.debug "${it.name} : ${it.value}"
-                    if (it.name == "Set-Cookie") {
-                    	//log.debug "Its SETCOOKIE ${it.value}"
-                        //state.myCookie = it.value
-                        def tempC = it.value.split(";")
-                        tempC = tempC[0].trim()
-                        if(tempC == state.myCookie) {
-                        	//log.debug "Cookie didn't change"
-                        } else {
-                        	state.myCookie = tempC
-                        	//log.debug "My Cookie: ${state.myCookie}"
-                        }
+            	TRACE("Status 200")
+            	try{
+                	TRACE("Headers:")
+                    resp.headers.each {
+                        //TRACE( "${it.name} : ${it.value}")
+
                     }
+                } catch(e) {
+                	TRACE("error $e in headers")
+                }
+                try{
+                    resp.data.each { name, value ->
+                        //TRACE("name:${name} , value: ${value}")
+                        if(name == "access_token") {
+                            state.access_token = value
+                        } else if( name == "token_type") {
+                            state.token_type = value
+                        }  else if( name == "expires_in") {
+                            state.expires_in = value
+                            state.expiresAt = now() + value*1000
+                            def tempNow = now()
+                           
+                        }  else if( name == "refresh_token") {
+                            state.refresh_token = value
+                        }  else if( name == "scope") {
+                            state.scope = value
+                        }
+                  } 
+            	}catch(e) {
+          			log.info "No new data"
         		}
+                printState()
 			} else {
 				TRACE( "http status: ${resp.status}")
 			}
@@ -198,98 +226,42 @@ def getAuthorized() {
     }	
 
 }
-
-def getToken() {
-	//log.debug "GetToken"
-    def params = [
-        uri: getApiEndpoint(),
-    	path: '/realtime/negotiate',
-        requestContentType: 'application/json',
-        contentType: 'application/json',
-        headers: [
-        	'Cookie':state.myCookie,
-            'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip'
-            ]
-	]
-    try {
-        httpGet(params) { resp ->
-            state.connectionToken = resp.data.ConnectionToken
-            state.connectionId = resp.data.ConnectionId
-        }
-    } catch (e) {
-        log.error "Connection Token error $e"
-    }
-
+def printState() {
+	TRACE("State:\naccess_token: $state.access_token\ntoken_type: $state.token_type\nexpires_in: $state.expires_in\nrefresh_token: $state.refresh_token\nscope: $state.scope")
 }
-def getConnected() {
-	getAuthorized()
-    getToken()
-	log.info "GetConnected"
-    
-    def params = [
-    	
-        uri: getApiEndpoint(),
-    	path: '/realtime/connect',
-        query: [
-        	transport:'longPolling',
-            connectionToken:state.connectionToken,
-        	connectionData:"[{\"name\": \"thermostat-v1\"}]",
-            connectionId:state.connectionId,
-            tid:state.RBCounter,"_":now()
-            ],
-        contentType: 'application/json',
-        headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip']
-	]
-    try {
-        httpGet(params) { resp ->
-            if(resp.data.C) {
-            	state.messageId= resp.data.C
-            	//log.debug "MessageID: ${state.messageId}"
-            }    
-            state.connected = true
-            state.RBCounter = state.RBCounter + 1
-            state.lastSubscribedDNI = null
-        }
-    } catch (e) {
-        log.error "Get Connected went wrong: $e"
-        state.connected = false
-    }    
-}
-def getSensiThermostats() {
-	TRACE("getting device list")
-	state.sensiSensors = []
+
+def getBMWCars() {
+	TRACE("Getting Cars")
+	state.bmwCars = []
 	def deviceListParams = [
 		uri: apiEndpoint,
-		path: "/api/thermostats",
-        requestContentType: 'application/json',
+		path: "/webapi/v1/user/vehicles/",
         contentType: 'application/json',
-		headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip']        
+		headers: ["Authorization":"$state.token_type $state.access_token"]        
 	]
-	//log.debug "Get Stats: ${deviceListParams}"
-	def stats = [:]
+	def myCars = [:]
 	try {
-		httpGet(deviceListParams) { resp ->
-        	
+		httpGet(deviceListParams) { resp ->        	
 			if (resp.status == 200) {
-            	TRACE ("resp.data.DeviceName: ${resp.data.DeviceName}")
-				resp.data.each { stat ->
-                	
-					state.sensiSensors = state.sensiSensors == null ? stat.DeviceName : state.sensiSensors <<  stat.DeviceName
-					def dni = stat.ICD
-					stats[dni] = getThermostatDisplayName(stat)
+            	
+				resp.data.vehicles.each { myCar ->
+                	TRACE("myCar:\n$myCar")
+					state.bmwCars = state.bmwCars == null ? myCar.model : state.bmwCars <<  myCar.model
+					def vin = myCar.vin
+					myCars[vin] = getCarDisplayName(myCar)
 				}
 			} else {
-				log.warn "Failed to get thermostat list in getSensiThermostats: ${resp.status}"
+            	state.refresh_token = null
+				log.warn "Failed to get car list in getBMWCars: ${resp.status}"
 			}
 		}
 	} catch (e) {
-        log.trace "Exception getting thermostats: " + e
-        state.connected = false
+        log.trace "Exception getting cars: " + e
+        state.refresh_token = null
     }
-	state.thermostats = stats
-    state.thermostatResponse = stats
-    //log.debug "State Thermostats: ${state.thermostats}"
-	return stats
+	state.bmwCars = myCars
+    state.bmwResponse = myCars
+	return myCars
 }
 def pollHandler() {
 	//log.debug "pollHandler()"
@@ -311,6 +283,7 @@ def pollChildren() {
                 runIn(30, poll)
             }
         } catch (e) {
+        	state.refresh_token = null
         	log.error "Error $e in pollChildren() for $child.device.label"
         }
     }
@@ -362,93 +335,61 @@ def getSubscribed(thermostatIdsString) {
     }
 }
 
-def getUnsubscribed(thermostatIdsString) {
-
-    //Unsubscribe from this device
-    def requestBody3 = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"Unsubscribe\",\"A\":[\"${thermostatIdsString}\"],\"I\":$state.RBCounter}"]
-    def params = [    	
-        uri: getApiEndpoint(),
-        path: '/realtime/send',
-        query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]",connectionId:state.connectionId],
-        headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip','Content-Type':'application/x-www-form-urlencoded',"X-Requested-With":"XMLHttpRequest"],
-        body: requestBody3
-    ]
-	state.RBCounter = state.RBCounter + 1
-    try {
-
-        httpPost(params) { resp ->
-            TRACE( "resp 3: ${resp.data}")
-        }
-    } 
-    catch (e) {
-        log.trace "Exception unsubscribing " + e
-        state.connected = false
-        runIn(30, pollChildData,[data: [value: thermostatIdsString], overwrite: true]) //when user click button this runIn will be overwrite
-    }
-    state.lastSubscribedDNI = null
-        
-}	
 def pollChildData(data) {
 	def device = getChildDevice(data.value)
 	log.info "Scheduled re-poll of $device.deviceLabel $data.value $device.label"
     pollChild(data.value)
 }
+public deviceTimeDateFormat() { "yyyy-MM-dd'T'HH:mm:ss" }
 // Poll Child is invoked from the Child Device itself as part of the Poll Capability
 // If no dni is passed it will call pollChildren and poll all devices
-def pollChild(dni = null) {
-	
-	if(dni == null) {
-    	TRACE("dni in pollChild is $dni")
+def pollChild(vin = null) {
+	TRACE("poll child called for ${vin}")
+	if(vin == null) {
+    	TRACE("No vin calling all cars")
     	pollChildren()
         return
     }
-    def thermostatIdsString = dni
+    def vinString = vin
 
     def params = []
     def result = false
-    if(!state.connected || (state.messageId == null)) {
-        getConnected()
-    }    
-    getSubscribed(thermostatIdsString)
+	getAuthorized()
+    
+    def timeString = new Date(now()+ location.timeZone.rawOffset + location.timeZone.dstSavings  ).format(deviceTimeDateFormat())
+    TRACE("devTime: ${timeString}")
+    
     params = [
         uri: getApiEndpoint(),
-        path: '/realtime/poll',
-        query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]"
-                ,connectionId:state.connectionId,messageId:state.messageId,tid:state.RBCounter,'_':now()],
-        headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip','Content-Type':'application/x-www-form-urlencoded',"X-Requested-With":"XMLHttpRequest"]
+        path: "/webapi/v1/user/vehicles/${vinString}/status",
+        contentType: 'application/json',
+		headers: ["Authorization":"$state.token_type $state.access_token"],
+        query: [deviceTime: "${timeString}"]
     ]
-    if(state.GroupsToken) {
-        params.query = [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]"
-                        ,connectionId:state.connectionId,messageId:state.messageId,GroupsToken:state.GroupsToken,tid:state.RBCounter,'_':now()]
-    }
+    TRACE("Status Params:\n $params")
 
     try{
         httpGet(params) { resp ->
-        	def httpResp =  resp.data.M[0].A[1] == null ? " " : resp.data.M[0].A[1]
+        	TRACE("Status GET:\n$resp.data")
+        	def httpResp =  resp.data.vehicleStatus == null ? " " : resp.data.vehicleStatus
             if(httpResp && (httpResp != true)) {            	
-                state.thermostatResponse[thermostatIdsString] = httpResp
+                state.bmwResponse[vinString] = httpResp
                 TRACE("child.generateEvent=$httpResp")
-                def myChild = getChildDevice(dni)
+                def myChild = getChildDevice(vin)
                 myChild.generateEvent(httpResp)
 				result = true
             } else {
-            	httpResp = resp.data.M[0].M == null ? " " : resp.data.M[0].M
+            	httpResp = resp.data.vehicleStatus == null ? " " : resp.data.vehicleStatus
             	log.warn "Unexpected final resp in pollChild: ${resp.data} likely offline: $httpResp"
             }
-            if(resp.data.C) {            	
-                state.messageId = resp.data.C
-
-            }
-            if(resp.data.G) {
-                state.GroupsToken = resp.data.G
-            }
         }
-        state.RBCounter = state.RBCounter + 1
+        
     } catch (e) {
-        log.error "Exception in pollChild: $e data: $resp.data"
-        log.error "repoll in 30 seconds. Re-poll: $thermostatIdsString"
-        state.connected = false //This will trigger new authentication next time the poll occurs   
-        runIn(30, pollChildData,[data: [value: thermostatIdsString], overwrite: true]) //when user click button this runIn will be overwrite
+    	state.refresh_token = null
+        log.error "Exception in pollChild: $e "
+        log.error "repoll in 30 seconds. Re-poll: $vinString"
+        
+        //runIn(30, pollChildData,[data: [value: vinString], overwrite: true]) //when user click button this runIn will be overwrite
     }
             
 	return result
@@ -491,7 +432,56 @@ def currentMode(child) {
  *
  * @retrun true if the command was successful, false otherwise.
  */
+boolean sendExecuteService(deviceId, serviceType, useKey = 0) {
+	state.lastServiceType = serviceType
+    state.lastVIN = deviceId
+    def bodyParams = []
+    if (useKey == 1) {
+    	bodyParams = ["serviceType" : "$serviceType",extendedStatusUpdates: "false",bmwSkAnswer:"$secretAnswer"]
+    } else {
+    	bodyParams = ["serviceType" : "$serviceType",extendedStatusUpdates: "false"]
+    }
+    def params = [    	
+        uri: getApiEndpoint(),
+        path: "/webapi/v1/user/vehicles/${deviceId}/executeService",
+        headers: ['Content-Type':'application/x-www-form-urlencoded',"Authorization":"$state.token_type $state.access_token"],
+        body: bodyParams
+    ]
+	TRACE("SES:\n$params")
+    try {
 
+        httpPost(params) { resp ->
+           TRACE("sendCmd: $resp.data")
+            
+        }
+    } catch (e) {
+        log.warn "Send executeService Command went wrong: $e"
+
+    }
+    runIn(60,checkCommand)
+    return true	
+}
+def checkCommand() {
+	def data = null
+    def params = [    	
+        uri: getApiEndpoint(),
+        path: "/webapi/v1/user/vehicles/${state.lastVIN}/serviceExecutionStatus",
+        headers: ['Content-Type':'application/x-www-form-urlencoded',"Authorization":"$state.token_type $state.access_token"],
+        query: ["serviceType" : "$state.lastServiceType"]
+    ]
+	TRACE("serviceStatus:\n$params")
+    try {
+
+        httpGet(params) { resp ->
+           TRACE("serviceStatus: $resp.data")
+            data = resp
+        }
+    } catch (e) {
+        log.warn "Get executeService status went wrong: $e"
+
+    }	
+    return data
+}
 boolean setStringCmd(deviceId, cmdString, cmdVal) {
 	//getConnected()
     getSubscribed(deviceId)
@@ -617,9 +607,11 @@ boolean sendDniSettingsStringCmd(thermostatIdsString,cmdSettings,cmdString,cmdVa
     return result
 }
 
-def getChildName()           { return "Sensi Thermostat" }
+def getChildName()           { return "BMW Connected Car" }
 def getServerUrl()           { return "https://graph.api.smartthings.com" }
-def getApiEndpoint()		 { return "https://manager.sensicomfort.com" }
+def getApiEndpoint()		 { return "https://b2vapi.bmwgroup.us" }
+def getApiEndpoint2()		 { return "https://tnrtkrucm4ig.runscope.net" }
+//tnrtkrucm4ig.runscope.net
 
 def debugEvent(message, displayEvent = false) {
 	def results = [
@@ -639,5 +631,5 @@ def sendActivityFeeds(notificationMessage) {
 }
 
 private def TRACE(message) {
-    //log.trace message
+    log.trace message
 }

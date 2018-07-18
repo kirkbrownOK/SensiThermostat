@@ -1,5 +1,5 @@
 /**
- *  Copyright 2016 Kirk Brown
+ *  Copyright 2017 Kirk Brown
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -10,37 +10,27 @@
  *  on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License
  *  for the specific language governing permissions and limitations under the License.
  *
- *	Emerson Sensi Community Created Service Manager
+ *	Community Driven Rachio IRO Controller -> Because SmartThings won't approve the Official One
  *
  *	Author: Kirk Brown
- *	Date: 2016-12-24
- *  Date: 2017-01-02  The Sensi Connect App is near fully functional
- *  Date: 2017-01-07  The Sensi Connect App has been changed to allow individual device polling. 
- *					  It also polls a thermostat immediately after sending a command
+ *	Date: 2017- January
  *
- *  Date: 2017-05-02  Changed the frequency of subscription/unsubscribe. Any time a new poll or before command subscribe new.
+ *	Place the Community Rachio (Connect) code under the My SmartApps section. Be certain you publish the app for you.
+ *  Place the Rachio Zone Device Type Handler under My Device Handlers section.
  *
- *	Place the Sensi (Connect) code under the My SmartApps section. Be certain you publish the app for you.
- *  Place the Sensi Thermostat Device Type Handler under My Device Handlers section.
- *  Be careful that if you change the Name and Namespace you that additionally change it in the addChildDevice() function
+ *  Be careful that if you change the Name and Namespace you that additionally change it in the addDevice() function
  *
  *
  *  The Program Flow is as follows:
- *  1.	SmartApp gets user credentials in the install process.
- *  2.	The SmartApp gets the user’s thermostats and lists them for subscription in the SmartApp.
- *  	a.	The smartApp uses the user’s credentials to get authorized, get a connection token, and then list the thermostats
- *  3.	The User then selects the desired thermostats to add to SmartThings
- *  4.	The SmartApp schedules a refresh/poll of the thermostats every so often. Default is 5 minutes for now but can be changed in the install configurations. The interface is not official, so polling to often could get noticed.
- *  XXXXXX Not true any more -> 5.	If any thermostat device is refreshed, then they all get polled from the Sensi API. YOU SHOULD NOT add polling to devices ie don’t use pollster for more than 1 thermostat device -> if you do then all devices will get updated each time.
- *	6. The devices can be polled by a pollster type SmartApp now and update seperately. However, all of them are still polled at the interval chosen during setup.
+ *  1.	SmartApp gets user credentials in the install process. The app uses the credentials to get the Api Access Token
  * There are a large number of debug statements that will turn on if you uncomment the statement inside the TRACE function at the bottom of the code
  */
  
 definition(
-		name: "Sensi (Connect)",
-		namespace: "kirkbrownOK/SensiThermostat",
+		name: "Community Rachio (Connect)",
+		namespace: "kirkbrownOK",
 		author: "Kirk Brown",
-		description: "Connect your Sensi thermostats to SmartThings.",
+		description: "Connect your Rachio SmartThings. (Unofficial)",
 		category: "SmartThings Labs",
 		iconUrl: "http://i.imgur.com/QVbsCpu.jpg",
 		iconX2Url: "http://i.imgur.com/4BfQn6I.jpg",
@@ -48,8 +38,8 @@ definition(
 )
 
 preferences {
-	page(name: "auth", title: "Sensi", nextPage:"", content:"authPage", uninstall: true)
-	page(name: "getDevicesPage", title: "Sensi Devices", nextPage:"", content:"getDevicesPage", uninstall: true, install: true)
+	page(name: "auth", title: "Rachio", nextPage:"", content:"authPage", uninstall: true)
+	page(name: "getDevicesPage", title: "Rachio Zones", nextPage:"", content:"getDevicesPage", uninstall: true, install: true)
 }
 
 def authPage() {
@@ -60,47 +50,48 @@ def authPage() {
 		description = "You are connected."
 		uninstallAllowed = true
 	} else {
-		description = "Click to enter Sensi Credentials"
+		description = "Click to enter Rachio Credentials"
 	}
 
 		return dynamicPage(name: "auth", title: "Login", nextPage: "getDevicesPage", uninstall:uninstallAllowed) {
 			section() {
-				paragraph "Enter your Username and Password for Sensi Connect. Your username and password will be saved in SmartThings in whatever secure/insecure manner SmartThings saves them."
-				input("userName", "string", title:"Sensi Email Address", required:true, displayDuringSetup: true)
-    			input("userPassword", "password", title:"Sensi account password", required:true, displayDuringSetup:true)	
-                input("pollInput", "number", title: "How often should ST poll Sensi Thermostat? (minutes)", required: false, displayDureingSetup: true)
+				paragraph "Enter your API Access Token. Log in to the Rachio Client. Click on the user options and find the API Access Token. " +
+                	"Your token will be saved in SmartThings in whatever secure/insecure manner SmartThings saves them."
+				input("userAPIToken", "string", title:"Rachio API Token", required:true, displayDuringSetup: true)
+                //input("userName", "string", title:"Rachio Email Address", required:true, displayDuringSetup: true)
+    			//input("userPassword", "password", title:"Rachio account password", required:true, displayDuringSetup:true)	
+                input("pollInput", "number", title: "How often should ST poll Rachio? (in minutes)", required: false, displayDureingSetup: true, defaultValue: 5)
 			}
 		}
 
 }
 def getDevicesPage() {
-    getConnected()
-         
-    def stats = getSensiThermostats()
-    return dynamicPage(name: "getDevicesPage", title: "Select Your Thermostats", uninstall: true) {
+    getRachioInfo()       
+    def _zones = getRachioDevices()
+    return dynamicPage(name: "getDevicesPage", title: "Select Your Zones", uninstall: true) {
         section("") {
-            paragraph "Tap below to see the list of sensi thermostats available in your sensi account and select the ones you want to connect to SmartThings."
-            input(name: "thermostats", title:"", type: "enum", required:false, multiple:true, description: "Tap to choose", metadata:[values:stats])
+            paragraph "Tap below to see the list of Rachio Zones available in your Rachio account and select the ones you want to connect to SmartThings."
+            input(name: "myZones", title:"", type: "enum", required:false, multiple:true, description: "Tap to choose", metadata:[values:_zones])
             
         }
     }
 }
 
 
-def getThermostatDisplayName(stat) {
-    if(stat?.DeviceName) {
-        return stat.DeviceName.toString()
+def getDeviceDisplayName(dev) {
+    if(dev?.DeviceName) {
+        return dev.DeviceName.toString()
     }
     return "Unknown"
 }
 
 def installed() {
-	log.info "Installed with settings: ${settings}"
+	log.debug "Installed with settings: ${settings}"
 	initialize()
 }
 
 def updated() {
-	log.info "Updated with settings: ${settings}"
+	log.debug "Updated with settings: ${settings}"
 	unsubscribe()
     unschedule()
 	initialize()
@@ -108,222 +99,208 @@ def updated() {
 
 def initialize() {
 
-    getAuthorized()
-    getToken()
-    
-	def devices = thermostats.collect { dni ->
+	def devices = myZones.collect { dni ->
 		def d = getChildDevice(dni)
+        
+        //TRACE("dni: $dni device: $d $state.rachioDevices")
 		if(!d) {
-        	TRACE( "addChildDevice($app.namespace, ${getChildName()}, $dni, null, [\"label\":\"${state.thermostats[dni]}\" : \"Sensi Thermostat\"])")
-			d = addChildDevice(app.namespace, getChildName(), dni, null, ["label":"${state.thermostats[dni]}" ?: "Sensi Thermostat"])
-			log.info "created ${d.displayName} with id $dni"
+        	if(state.rachioControllers[dni] != null) {        	
+            	//TRACE("Its a controller device: ${state.rachioDevices[dni]}")
+                
+                //TRACE( "addChildDevice($app.namespace, ${getControllerName()}, $dni, null, [\"name\": ${state.rachioDevices[dni]},\"label\":\"Rachio Controller:$state.rachioDevices[dni]\"])")
+				//d = addChildDevice(app.namespace, getControllerName(), dni, null, ["name":"Rachio Zone: $state.rachioDevices[dni],"label":"$state.rachioDevices[dni]"])
+         	} else {   
+            	//TRACE("Its a zone device: ${state.rachioDevices[dni]}")
+                //TRACE( "addChildDevice($app.namespace, ${getChildName()}, $dni, null, [\"name\": ${state.rachioDevices[dni]},\"label\":\"Rachio Zone:$state.rachioDevices[dni]\"])")
+				d = addChildDevice(app.namespace, getChildName(), dni, null, ["name":"Rachio Zone: ${state.rachioDevices[dni]}","label":"${state.rachioDevices[dni]}"])
+            }
+            log.debug "created ${d.name} with id $dni"
 		} else {
-			log.info "found ${d.displayName} with id $dni already exists"
+			//log.debug "found ${d.displayName} with id $dni already exists"
 		}
 		return d
 	}
 
-	TRACE( "created ${devices.size()} thermostats.")
+	TRACE( "created ${devices.size()} zones.")
 
 	def delete  // Delete any that are no longer in settings
-	if(!thermostats) {
-		log.info "delete thermostats ands sensors"
+	if(!myZones) {
+		log.debug "delete zones"
 		delete = getAllChildDevices() //inherits from SmartApp (data-management)
 	} else { //delete only thermostat
-		log.info "delete individual thermostat"
-		delete = getChildDevices().findAll { !thermostats.contains(it.deviceNetworkId) }		
+		log.debug "delete individual zone"
+		delete = getChildDevices().findAll { !myZones.contains(it.deviceNetworkId) }		
 	}
-	log.warn "delete: ${delete}, deleting ${delete.size()} thermostats"
+	log.warn "delete: ${delete}, deleting ${delete.size()} zones"
 	delete.each { deleteChildDevice(it.deviceNetworkId) } //inherits from SmartApp (data-management)
 
 	//send activity feeds to tell that device is connected
 	def notificationMessage = "is connected to SmartThings"
 	sendActivityFeeds(notificationMessage)
-	state.timeSendPush = null
-	state.reAttempt = 0
 
 	try{
-		poll() //first time polling data data from thermostat
+		//poll() //first time polling data data from thermostat
 	} catch (e) {
     	log.warn "Error in first time polling. Could mean something is wrong."
     }
 	//automatically update devices status every 5 mins
     def pollRate = pollInput == null ? 5 : pollInput
-    if(pollRate > 59 || pollRate < 1) {
+    if(pollRate > 59) {
     	pollRate = 5
         log.warn "You picked an invalid pollRate: $pollInput minutes. Changed to 5 minutes."
     }    
-	schedule("0 0/${pollRate} * * * ?","poll")
+	//schedule("0 0/${pollRate} * * * ?","poll")
     
 
 }
 
 def getAuthorized() {
-    def bodyParams = [ Password: "${userPassword}", UserName: "${userName}" ]
-    state.RBCounter = 2
-    state.sendCounter= 0
-    state.GroupsToken = null
+	TRACE("Get Authorized")
 	def deviceListParams = [
 		uri: getApiEndpoint(),
-		path: "/api/authorize",
-		headers: ["Content-Type": "application/json", "Accept": "application/json; version=1, */*; q=0.01", "X-Requested-With":"XMLHttpRequest"],
-		body: [ Password: userPassword, UserName: userName ]
+		path: "/login?",
+		headers: ["Content-Type": "application/json", "Accept": "application/json; text/javascript, */*; q=0.01", "X-Requested-With":"XMLHttpRequest"],
+		body: [ username: userName, password: userPassword]
 	]
+    TRACE("dlp: $deviceListParams")
 	try {
 		httpPostJson(deviceListParams) { resp ->
         	//log.debug "Resp Headers: ${resp.headers}"
-        	
+            //log.debug "Resp $resp"
 			if (resp.status == 200) {
 				resp.headers.each {
-            		//log.debug "${it.name} : ${it.value}"
-                    if (it.name == "Set-Cookie") {
-                    	//log.debug "Its SETCOOKIE ${it.value}"
-                        //state.myCookie = it.value
-                        def tempC = it.value.split(";")
-                        tempC = tempC[0].trim()
-                        if(tempC == state.myCookie) {
-                        	//log.debug "Cookie didn't change"
-                        } else {
-                        	state.myCookie = tempC
-                        	//log.debug "My Cookie: ${state.myCookie}"
-                        }
-                    }
+            		log.debug "${it.name} : ${it.value}"
+   
         		}
+                resp.data.each {
+                	log.debug "${it}"
+                    
+                }
 			} else {
-				TRACE( "http status: ${resp.status}")
+				log.debug "http status: ${resp.status}"
 			}
 		}
 	} catch (e) {
-        log.warn "Exception trying to authenticate $e"
+        log.trace "Exception trying to authenticate $e"
     }	
 
 }
-
-def getToken() {
-	//log.debug "GetToken"
-    def params = [
-        uri: getApiEndpoint(),
-    	path: '/realtime/negotiate',
-        requestContentType: 'application/json',
-        contentType: 'application/json',
-        headers: [
-        	'Cookie':state.myCookie,
-            'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip'
-            ]
-	]
-    try {
-        httpGet(params) { resp ->
-            state.connectionToken = resp.data.ConnectionToken
-            state.connectionId = resp.data.ConnectionId
-        }
-    } catch (e) {
-        log.error "Connection Token error $e"
-    }
-
-}
-def getConnected() {
-	getAuthorized()
-    getToken()
-	log.info "GetConnected"
-    
-    def params = [
-    	
-        uri: getApiEndpoint(),
-    	path: '/realtime/connect',
-        query: [
-        	transport:'longPolling',
-            connectionToken:state.connectionToken,
-        	connectionData:"[{\"name\": \"thermostat-v1\"}]",
-            connectionId:state.connectionId,
-            tid:state.RBCounter,"_":now()
-            ],
-        contentType: 'application/json',
-        headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip']
-	]
-    try {
-        httpGet(params) { resp ->
-            if(resp.data.C) {
-            	state.messageId= resp.data.C
-            	//log.debug "MessageID: ${state.messageId}"
-            }    
-            state.connected = true
-            state.RBCounter = state.RBCounter + 1
-            state.lastSubscribedDNI = null
-        }
-    } catch (e) {
-        log.error "Get Connected went wrong: $e"
-        state.connected = false
-    }    
-}
-def getSensiThermostats() {
-	TRACE("getting device list")
-	state.sensiSensors = []
+//This function uses the API token to retrieve the User ID
+def getRachioInfo() {
+	state.apiToken = userAPIToken
 	def deviceListParams = [
 		uri: apiEndpoint,
-		path: "/api/thermostats",
-        requestContentType: 'application/json',
-        contentType: 'application/json',
-		headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip']        
+		path: "/1/public/person/info",
+        requestContentType: "application/json",
+        //contentType: "application/json",
+		headers: ["Authorization":"Bearer ${state.apiToken}"]        
 	]
-	//log.debug "Get Stats: ${deviceListParams}"
-	def stats = [:]
+	//log.debug "getRachio Params: ${deviceListParams}"
 	try {
 		httpGet(deviceListParams) { resp ->
-        	
+        	//TRACE("resp: $resp.data")
 			if (resp.status == 200) {
-            	TRACE ("resp.data.DeviceName: ${resp.data.DeviceName}")
-				resp.data.each { stat ->
-                	
-					state.sensiSensors = state.sensiSensors == null ? stat.DeviceName : state.sensiSensors <<  stat.DeviceName
-					def dni = stat.ICD
-					stats[dni] = getThermostatDisplayName(stat)
+            	
+				resp.data.each { name, value ->
+                	if(name =="id") {
+                    	state.id = value
+                    }
 				}
 			} else {
-				log.warn "Failed to get thermostat list in getSensiThermostats: ${resp.status}"
+				log.debug "http status: ${resp.status}"
 			}
 		}
 	} catch (e) {
-        log.trace "Exception getting thermostats: " + e
+        log.trace "Exception getting rachio id " + e
+        state.connected = false
+        return false
+    }
+    TRACE("User ID: $state.id")
+	return true
+}
+//This function uses the User ID to retrieve the Device ID and details
+def getRachioDevices() {
+	state.rachioDevices = [:]
+    state.rachioControllers =[:]
+    def myDevices = [:]
+	def deviceListParams = [
+		uri: apiEndpoint,
+		path: "/1/public/person/${state.id}",
+        requestContentType: "application/json",
+        //contentType: "application/json",
+		headers: ["Authorization":"Bearer ${state.apiToken}"]        
+	]
+	log.debug "getRachioControllers: ${deviceListParams}"
+	try {
+		httpGet(deviceListParams) { resp ->
+			if (resp.status == 200) {
+                //This contains the summary of Controllers
+                resp.data.devices.each { controllers ->
+                	state.rachioDevices[controllers.id.toString()] = controllers.name.toString()
+                    state.rachioControllers[controllers.id.toString()] = controllers.name.toString()
+                    myDevices[controllers.id.toString()] = controllers.name.toString()
+                	controllers.each { name, value ->                    	
+                       	if(name =="zones") {                           
+                            value.each{ zone ->
+                            	zone.each{zname, zvalue ->
+                                	if(zname == "name" && zone.enabled) {
+                                    	//TRACE("name: $zname, value: $zvalue")
+                                        state.rachioDevices[zone.id.toString()] = zvalue.toString()
+                                        myDevices[zone.id.toString()] = zvalue.toString()
+                                    }
+                					
+                                
+                                }
+                            }
+                            
+                            
+                        }
+                		
+					}
+				}
+				//resp.data.devices.each { name, value ->
+                //	TRACE("name: $name, value: $value")
+				//}
+			} else {
+				log.debug "http status: ${resp.status}"
+			}
+		}
+	} catch (e) {
+        log.trace "Exception getting device ids " + e
         state.connected = false
     }
-	state.thermostats = stats
-    state.thermostatResponse = stats
-    //log.debug "State Thermostats: ${state.thermostats}"
-	return stats
+    //TRACE("Rachio Controllers: $state.rachioControllers")
+    TRACE("Rachio Devices: ${myDevices}")
+    return myDevices
 }
+
 def pollHandler() {
-	//log.debug "pollHandler()"
+	TRACE("pollHandler()")
 	pollChildren(null) // Hit the sensi API for update on all thermostats
 
 }
 
 def pollChildren() {
 	def devices = getChildDevices()
-	devices.each { child ->
-    	TRACE("pollChild($child.device.deviceNetworkId)")
-        try{
-            if(pollChild(child.device.deviceNetworkId)) {
-                TRACE("pollChildren successful")
+    TRACE("Update Zones")
+    try{
 
-            } else {
-                log.warn "pollChildren FAILED for $child.device.label"
-                state.connected = false
-                runIn(30, poll)
-            }
-        } catch (e) {
-        	log.error "Error $e in pollChildren() for $child.device.label"
-        }
+    } catch (e) {
+        log.error "Error $e in pollChildren() for $child.device.label"
     }
+	devices.each { child ->
+	
+    
+    }
+
     return true
 }
 def getSubscribed(thermostatIdsString) {
-	/*
 	if(state.lastSubscribedDNI == thermostatIdsString) {
     	TRACE("Thermostat already subscribed")
         return true
-    } else */
-    if(state.lastSubscribedDNI != null) {
-    	TRACE("Unsubscribing from: $state.lastSubscribedDNI")
+    } else if(state.lastSubscribedDNI != null) {
+    	TRACE("Thermostat not subscribed")
     	getUnsubscribed(state.lastSubscribedDNI)
     }
 	TRACE("Getting subscribed to $thermostatIdsString")
@@ -346,7 +323,7 @@ def getSubscribed(thermostatIdsString) {
     try {
 
         httpPost(params) { resp ->
-            TRACE( "Subscribe response: ${resp.data} Expected Response: [I:${state.RBCounter - 1}]")
+            TRACE( "Subscribe response: ${resp.data} Expected Response: {I:${state.RBCounter - 1}")
             if(resp?.data.I?.toInteger() == (state.RBCounter - 1)) {
 				state.lastSubscribedDNI = thermostatIdsString
                 TRACE("Subscribe successfully")
@@ -390,7 +367,7 @@ def getUnsubscribed(thermostatIdsString) {
 }	
 def pollChildData(data) {
 	def device = getChildDevice(data.value)
-	log.info "Scheduled re-poll of $device.deviceLabel $data.value $device.label"
+	TRACE("Scheduled re-poll of $device.deviceLabel")
     pollChild(data.value)
 }
 // Poll Child is invoked from the Child Device itself as part of the Poll Capability
@@ -432,8 +409,7 @@ def pollChild(dni = null) {
                 myChild.generateEvent(httpResp)
 				result = true
             } else {
-            	httpResp = resp.data.M[0].M == null ? " " : resp.data.M[0].M
-            	log.warn "Unexpected final resp in pollChild: ${resp.data} likely offline: $httpResp"
+            	log.debug "Unexpected final resp: ${resp.data}"
             }
             if(resp.data.C) {            	
                 state.messageId = resp.data.C
@@ -445,8 +421,7 @@ def pollChild(dni = null) {
         }
         state.RBCounter = state.RBCounter + 1
     } catch (e) {
-        log.error "Exception in pollChild: $e data: $resp.data"
-        log.error "repoll in 30 seconds. Re-poll: $thermostatIdsString"
+        log.trace "Exception polling child $e repoll in 30 seconds"
         state.connected = false //This will trigger new authentication next time the poll occurs   
         runIn(30, pollChildData,[data: [value: thermostatIdsString], overwrite: true]) //when user click button this runIn will be overwrite
     }
@@ -496,30 +471,20 @@ boolean setStringCmd(deviceId, cmdString, cmdVal) {
 	//getConnected()
     getSubscribed(deviceId)
     def result = sendDniStringCmd(deviceId,cmdString,cmdVal)
-    TRACE( "Setstring ${result}")
+    log.debug "Setstring ${result}"
     //The sensi web app immediately polls the thermostat for updates after send before unsubscribe
     pollChild(deviceId)
-    getUnsubscribed(deviceId)
-    return result
-}
-boolean setSettingsStringCmd(deviceId,cmdSettings, cmdString, cmdVal) {
-	//getConnected()
-    getSubscribed(deviceId)
-    def result = sendDniSettingsStringCmd(deviceId,cmdSettings,cmdString,cmdVal)
-    TRACE( "Setstring ${result}")
-    //The sensi web app immediately polls the thermostat for updates after send before unsubscribe
-    pollChild(deviceId)
-    getUnsubscribed(deviceId)
+    //getUnsubscribed(deviceId)
     return result
 }
 boolean setTempCmd(deviceId, cmdString, cmdVal) {
 	//getConnected()
     getSubscribed(deviceId)
     def result = sendDniValue(deviceId,cmdString,cmdVal)
-    TRACE( "Setstring ${result}")
+    log.debug "Setstring ${result}"
     //The sensi web app immediately polls the thermostat for updates after send before unsubscribe
     pollChild(deviceId)
-    getUnsubscribed
+    //getUnsubscribed
     return result
 }
 boolean sendDniValue(thermostatIdsString,cmdString,cmdVal) {
@@ -545,7 +510,7 @@ boolean sendDniValue(thermostatIdsString,cmdString,cmdVal) {
             state.RBCounter = state.RBCounter + 1
         }
     } catch (e) {
-        log.warn "Send DNI Command went wrong: $e"
+        log.error "Send DNI Command went wrong: $e"
         state.connected = false
         state.RBCounter = state.RBCounter + 1
 
@@ -575,39 +540,7 @@ boolean sendDniStringCmd(thermostatIdsString,cmdString,cmdVal) {
             state.RBCounter = state.RBCounter + 1
         }
     } catch (e) {
-        log.warn "Send DNI String Command went wrong: $e"
-        state.connected = false
-        state.RBCounter = state.RBCounter + 1
-        runIn(30, pollChildData,[data: [value: thermostatIdsString], overwrite: true]) //when user click button this runIn will be overwrite
-
-    }
-    TRACE( "Send Function : $result")
-    return result
-}
-/* {"H":"thermostat-v1","M":"ChangeSetting","A":["thermostatid is here","KeypadLockout","Off"],"I":8} */
-boolean sendDniSettingsStringCmd(thermostatIdsString,cmdSettings,cmdString,cmdVal) {
-	def result = false
-    def requestBody = ['data':"{\"H\":\"thermostat-v1\",\"M\":\"$cmdSettings\",\"A\":[\"${thermostatIdsString}\",\"$cmdString\",\"$cmdVal\"],\"I\":$state.RBCounter}"]
-    
-    def params = [    	
-        uri: getApiEndpoint(),
-        path: '/realtime/send',
-        query: [transport:'longPolling',connectionToken:state.connectionToken,connectionData:"[{\"name\": \"thermostat-v1\"}]",connectionId:state.connectionId],
-        headers: ['Cookie':state.myCookie,'Accept':'application/json; version=1, */*; q=0.01', 'Accept-Encoding':'gzip','Content-Type':'application/x-www-form-urlencoded',"X-Requested-With":"XMLHttpRequest"],
-        body: requestBody
-    ]
-
-    try {
-
-        httpPost(params) { resp ->
-            
-            if (resp.data.I.toInteger() == state.RBCounter.toInteger()) {
-            	result = true
-            }
-            state.RBCounter = state.RBCounter + 1
-        }
-    } catch (e) {
-        log.warn "Send DNI Setting String Command went wrong: $e"
+        log.error "Send DNI Command went wrong: $e"
         state.connected = false
         state.RBCounter = state.RBCounter + 1
         runIn(30, pollChildData,[data: [value: thermostatIdsString], overwrite: true]) //when user click button this runIn will be overwrite
@@ -617,19 +550,12 @@ boolean sendDniSettingsStringCmd(thermostatIdsString,cmdSettings,cmdString,cmdVa
     return result
 }
 
-def getChildName()           { return "Sensi Thermostat" }
+
+def getChildName()           { return "Unofficial Rachio Zone" }
+def getControllerName()      { return "Unofficial Rachio Controller" }
 def getServerUrl()           { return "https://graph.api.smartthings.com" }
-def getApiEndpoint()		 { return "https://manager.sensicomfort.com" }
+def getApiEndpoint()		 { return "https://api.rach.io" }
 
-def debugEvent(message, displayEvent = false) {
-	def results = [
-		name: "appdebug",
-		descriptionText: message,
-		displayed: displayEvent
-	]
-	log.debug "Generating AppDebug Event: ${results}"
-	sendEvent (results)
-}
 
 def sendActivityFeeds(notificationMessage) {
 	def devices = getChildDevices()
@@ -639,5 +565,5 @@ def sendActivityFeeds(notificationMessage) {
 }
 
 private def TRACE(message) {
-    //log.trace message
+    log.debug message
 }
