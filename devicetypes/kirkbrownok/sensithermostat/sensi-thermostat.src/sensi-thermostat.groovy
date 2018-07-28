@@ -445,6 +445,13 @@ def parseEnvironmentControls(controls) {
             if(name == "FanMode") { 
                 def sendValue = value.toLowerCase()
                 checkSendEvent("thermostatFanMode",sendValue, "${device.name} Fan Mode ${sendValue}")
+                if(sendValue == "on") {
+                	checkSendEvent("thermostatFanState","on")
+                } else if ( (sendValue == "auto") && (device.currentValue("thermostatOperatingState") == "idle") ) {
+                	checkSendEvent("thermostatFanState","off")
+                } else {
+                	log.warn "unknown FanMode attribute received from Sensi.  FanMode value = $value"
+                }
             }
             if(name == "HoldMode") { 
                 //off: means Schedule is Running, Temporary means off schedule until next state on: means Hold indifinitely
@@ -994,6 +1001,7 @@ def fanOn() {
 	def cmdString = "SetFanMode"
 	if (parent.setStringCmd( deviceId,cmdString,cmdVal)) {
 		sendEvent([name: "thermostatFanMode", value: "on", descriptionText: "${device.name} sent ${cmdString} ${cmdVal}"])
+        checkSendEvent("thermostatFanState","on")
 	} else {
 		log.debug "Error setting new mode."
 		def currentFanMode = device.currentState("thermostatFanMode")?.value
@@ -1038,7 +1046,14 @@ def fanAuto() {
 	def cmdString = "SetFanMode"
 	if (parent.setStringCmd(deviceId,cmdString,cmdVal)) {
 		sendEvent([name: "thermostatFanMode", value: "auto", descriptionText: "${device.name} sent ${cmdString} ${cmdVal}"])
-
+        def operationalState = device.currentValue("thermostatOperatingState")
+		if (operationalState  == "idle" ) {
+        	log.info "current thermostatOperatingState is idle, setting thermostatFanState to off"
+            checkSendEvent("thermostatFanState","off")
+        } else {
+        	def currentFanState = device.currentValue("thermostatFanState")
+        	log.info "current thermostatOperatingState is $operationalState and thermostatFanState is $currentFanState.  Not updating the thermostatFanState"  
+        }
 	} else {
 		log.debug "Error setting new mode."
 		def currentFanMode = device.currentState("thermostatFanMode")?.value
@@ -1294,5 +1309,5 @@ def convertCtoF (tempC) {
 
 
 private def TRACE(message) {
-    log.debug message
+    //log.debug message
 }
